@@ -179,11 +179,13 @@ function manageCache(messages) {
   }
 
   // 2. Add checkpoints every N messages
-  // Limit is 4 checkpoints total. System takes 1. We have 3 left.
-  // We want to space them out to cover as much history as possible.
-  // Increased interval to 25 to cover longer conversations.
+  // Limit is 4 checkpoints total. 
+  // - System Prompt: 1
+  // - Tools definitions (always sent): 1
+  // - History: 2 remaining slots.
+  // We start count at 2 to account for System and Tools.
   
-  let checkpointsUsed = 1; // System prompt
+  let checkpointsUsed = 2; 
   const CHECKPOINT_INTERVAL = 25;
 
   for (let i = 0; i < messages.length; i++) {
