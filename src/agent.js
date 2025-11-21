@@ -193,52 +193,90 @@ function manageCache(messages) {
   const CHECKPOINT_INTERVAL = 8; 
 
   // Calculate desired checkpoint indices based on interval
-  let desiredIndices = [];
+  const desiredIndicesCount = [];
+  const candidateIndices = [];
+
+  // Identify potential candidates (Every Nth message)
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     if (msg.role === 'system') continue;
 
-    // We want checkpoints every CHECKPOINT_INTERVAL
     if (i % CHECKPOINT_INTERVAL === 0 && i > 0) {
-      desiredIndices.push(i);
+      candidateIndices.push(i);
     }
   }
+
+  // Resolve candidates to actual valid cacheable messages
+  // If a candidate message doesn't have content (e.g., pure Tool Call), move to nearest neighbor
+  let finalIndices = [];
   
-  // Also consider always caching the very last message if it's not covered?
-  // This ensures max freshness, but might cause thrashing. 
-  // Let's stick to the interval for stability, but ensure we keep the LATEST interval points.
-  
+  for (const index of candidateIndices) {
+     let bestIndex = -1;
+     // Search window: [index, index-1, index+1, index-2, ...] 
+     // We prefer keeping it close to the interval. 
+     // Prioritize current, then immediate previous (User), then next.
+     const searchOrder = [index, index - 1, index + 1, index - 2, index + 2];
+     
+     for (const searchIdx of searchOrder) {
+       if (searchIdx > 0 && searchIdx < messages.length) {
+         const m = messages[searchIdx];
+         // Check if cacheable: contains 'content' string or array
+         const hasContent = m.content && (typeof m.content === 'string' || (Array.isArray(m.content) && m.content.length > 0));
+         if (hasContent) {
+           bestIndex = searchIdx;
+           break;
+         }
+       }
+     }
+
+     if (bestIndex !== -1) {
+       if (!finalIndices.includes(bestIndex)) {
+         finalIndices.push(bestIndex);
+       }
+     }
+  }
+
   // Keep only the last N desired indices
-  if (desiredIndices.length > HISTORY_CHECKPOINTS_QUOTA) {
-    desiredIndices = desiredIndices.slice(-HISTORY_CHECKPOINTS_QUOTA);
+  if (finalIndices.length > HISTORY_CHECKPOINTS_QUOTA) {
+    finalIndices = finalIndices.slice(-HISTORY_CHECKPOINTS_QUOTA);
   }
 
   // Apply changes to messages
-  // First, remove cache from any message NOT in desiredIndices
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     if (msg.role === 'system') continue;
 
-    const isDesired = desiredIndices.includes(i);
+    const isDesired = finalIndices.includes(i);
     let hasCheckpoint = false;
+    
+    // Helper to check existence
     if (Array.isArray(msg.content)) {
       hasCheckpoint = msg.content.some(block => block.cache_control);
+    } else if (typeof msg.content === 'string') {
+      // String content definitely has no cache_control object on it yet, 
+      // but we check if we previously converted it? 
+      // No, if it is string, it has no checkpoint.
+      hasCheckpoint = false;
     }
 
     if (hasCheckpoint && !isDesired) {
       // Remove checkpoint
-      msg.content.forEach(block => {
-        if (block.cache_control) delete block.cache_control;
-      });
+      if (Array.isArray(msg.content)) {
+        msg.content.forEach(block => {
+          if (block.cache_control) delete block.cache_control;
+        });
+      }
       console.log(`\x1b[33m[Cache] Checkpoint removed at message ${i}\x1b[0m`);
     } else if (!hasCheckpoint && isDesired) {
       // Add checkpoint
       if (typeof msg.content === 'string') {
         msg.content = [{ type: "text", text: msg.content }];
       }
+      
       if (Array.isArray(msg.content) && msg.content.length > 0) {
+        // Add to the last block
         msg.content[msg.content.length - 1].cache_control = { type: "ephemeral" };
-        console.log(`\x1b[32m[Cache] Checkpoint added at message ${i}\x1b[0m`);
+        console.log(`\x1b[32m[Cache] Checkpoint added at message ${i} (Role: ${msg.role})\x1b[0m`);
       }
     }
   }
