@@ -156,6 +156,7 @@ async function processTurn() {
 /**
  * Manages cache control headers in messages.
  * Adds explicit cache checkpoints to the system prompt and periodically in the history.
+ * Implements a rolling window of checkpoints to stay within the 4-checkpoint limit.
  * @param {Array} messages 
  */
 function manageCache(messages) {
@@ -179,43 +180,65 @@ function manageCache(messages) {
     }
   }
 
-  // 2. Add checkpoints every N messages
-  // Limit is 4 checkpoints total. 
-  // - System Prompt: 1
-  // - Tools definitions (always sent): 1
+  // 2. Manage History Checkpoints
+  // Limit is 4 checkpoints total.
+  // - System Prompt: 1 (Handled above)
+  // - Tools definitions: 1 (Handled in tools.js/llm.js implicitly)
   // - History: 2 remaining slots.
-  // We start count at 2 to account for System and Tools.
   
-  let checkpointsUsed = 2; 
-  const CHECKPOINT_INTERVAL = 8; // Reduced from 25 to ensure we use checkpoints earlier
+  const SYSTEM_AND_TOOLS_CHECKPOINTS = 2;
+  const MAX_CHECKPOINTS = 4;
+  const HISTORY_CHECKPOINTS_QUOTA = MAX_CHECKPOINTS - SYSTEM_AND_TOOLS_CHECKPOINTS; // 2
 
+  const CHECKPOINT_INTERVAL = 8; 
+
+  // Calculate desired checkpoint indices based on interval
+  let desiredIndices = [];
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     if (msg.role === 'system') continue;
 
-    // Check if this message already has a checkpoint
+    // We want checkpoints every CHECKPOINT_INTERVAL
+    if (i % CHECKPOINT_INTERVAL === 0 && i > 0) {
+      desiredIndices.push(i);
+    }
+  }
+  
+  // Also consider always caching the very last message if it's not covered?
+  // This ensures max freshness, but might cause thrashing. 
+  // Let's stick to the interval for stability, but ensure we keep the LATEST interval points.
+  
+  // Keep only the last N desired indices
+  if (desiredIndices.length > HISTORY_CHECKPOINTS_QUOTA) {
+    desiredIndices = desiredIndices.slice(-HISTORY_CHECKPOINTS_QUOTA);
+  }
+
+  // Apply changes to messages
+  // First, remove cache from any message NOT in desiredIndices
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.role === 'system') continue;
+
+    const isDesired = desiredIndices.includes(i);
     let hasCheckpoint = false;
     if (Array.isArray(msg.content)) {
       hasCheckpoint = msg.content.some(block => block.cache_control);
     }
 
-    if (hasCheckpoint) {
-      checkpointsUsed++;
-      continue;
-    }
-
-    // If we have budget and it's time to add a checkpoint
-    if (checkpointsUsed < 4 && i > 0 && i % CHECKPOINT_INTERVAL === 0) {
-      // Convert content to array if string
+    if (hasCheckpoint && !isDesired) {
+      // Remove checkpoint
+      msg.content.forEach(block => {
+        if (block.cache_control) delete block.cache_control;
+      });
+      console.log(`\x1b[33m[Cache] Checkpoint removed at message ${i}\x1b[0m`);
+    } else if (!hasCheckpoint && isDesired) {
+      // Add checkpoint
       if (typeof msg.content === 'string') {
         msg.content = [{ type: "text", text: msg.content }];
       }
-      
-      // Add cache_control to the last block
       if (Array.isArray(msg.content) && msg.content.length > 0) {
         msg.content[msg.content.length - 1].cache_control = { type: "ephemeral" };
-        checkpointsUsed++;
-        console.log(`\x1b[32m[Cache] Checkpoint added at message ${i} (Total: ${checkpointsUsed})\x1b[0m`);
+        console.log(`\x1b[32m[Cache] Checkpoint added at message ${i}\x1b[0m`);
       }
     }
   }
