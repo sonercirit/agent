@@ -100,7 +100,8 @@ async function processTurn() {
         }
 
         if (hasSeenCachedTokens && cachedTokens === 0) {
-          console.log(`\x1b[31mWARNING: Cached tokens dropped to 0! (Elapsed: ${elapsedMinutes.toFixed(1)} minutes). Checkpoints may be exhausted or cache TTL expired.\x1b[0m`);
+          const reason = elapsedMinutes < 4.0 ? "Prefix mismatch or Checkpoint limit" : "Cache TTL expired";
+          console.log(`\x1b[31mWARNING: Cached tokens dropped to 0! (Elapsed: ${elapsedMinutes.toFixed(1)} minutes). Cause: ${reason}.\x1b[0m`);
         }
       }
       
@@ -186,7 +187,7 @@ function manageCache(messages) {
   // We start count at 2 to account for System and Tools.
   
   let checkpointsUsed = 2; 
-  const CHECKPOINT_INTERVAL = 25;
+  const CHECKPOINT_INTERVAL = 8; // Reduced from 25 to ensure we use checkpoints earlier
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
@@ -214,6 +215,7 @@ function manageCache(messages) {
       if (Array.isArray(msg.content) && msg.content.length > 0) {
         msg.content[msg.content.length - 1].cache_control = { type: "ephemeral" };
         checkpointsUsed++;
+        console.log(`\x1b[32m[Cache] Checkpoint added at message ${i} (Total: ${checkpointsUsed})\x1b[0m`);
       }
     }
   }
