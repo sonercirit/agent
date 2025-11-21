@@ -100,7 +100,7 @@ async function processTurn() {
         }
 
         if (hasSeenCachedTokens && cachedTokens === 0) {
-          console.log(`\x1b[31mWARNING: Cached tokens dropped to 0! (This is likely due to an inactivity timeout. Elapsed: ${elapsedMinutes.toFixed(1)} minutes)\x1b[0m`);
+          console.log(`\x1b[31mWARNING: Cached tokens dropped to 0! (Elapsed: ${elapsedMinutes.toFixed(1)} minutes). Checkpoints may be exhausted or cache TTL expired.\x1b[0m`);
         }
       }
       
@@ -181,10 +181,10 @@ function manageCache(messages) {
   // 2. Add checkpoints every N messages
   // Limit is 4 checkpoints total. System takes 1. We have 3 left.
   // We want to space them out to cover as much history as possible.
-  // Let's say we add a checkpoint every 10 messages.
+  // Increased interval to 25 to cover longer conversations.
   
   let checkpointsUsed = 1; // System prompt
-  const CHECKPOINT_INTERVAL = 10;
+  const CHECKPOINT_INTERVAL = 25;
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];

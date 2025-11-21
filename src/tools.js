@@ -212,6 +212,7 @@ export const tools = [
         required: ["path", "content"],
       },
     },
+    cache_control: { type: "ephemeral" }
   },
 ];
 
