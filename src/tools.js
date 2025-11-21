@@ -60,7 +60,7 @@ async function search_string({ query }) {
 
 /**
  * Reads a file or a specific line range.
- * Enforces a maximum of 100 lines per read.
+ * Enforces a maximum of 500 lines per read.
  */
 async function read_file({ path: filePath, start_line, end_line }) {
   if (!filePath) return "Error: 'path' is required.";
@@ -81,8 +81,8 @@ async function read_file({ path: filePath, start_line, end_line }) {
       if (isNaN(end)) end = lines.length;
     }
 
-    // Enforce 100 line limit
-    const MAX_LINES = 100;
+    // Enforce 500 line limit
+    const MAX_LINES = 500;
     
     if (end - start > MAX_LINES) {
        end = start + MAX_LINES;
@@ -94,7 +94,7 @@ async function read_file({ path: filePath, start_line, end_line }) {
 
     const selectedLines = lines.slice(start, end);
     
-    return limitOutput(selectedLines.join('\n'));
+    return limitOutput(`(Total lines: ${lines.length})\n` + selectedLines.join('\n'));
 
   } catch (error) {
     return `Error reading file: ${error.message}`;
