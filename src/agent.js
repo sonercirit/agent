@@ -34,7 +34,7 @@ let lastRequestTime = 0;
  */
 export async function startAgent() {
   console.log(
-    `Agent started in ${config.mode} mode using model ${config.model}`
+    `Agent started in ${config.mode} mode using model ${config.model}`,
   );
   console.log("Type 'exit' to quit.");
 
@@ -122,10 +122,10 @@ async function processTurn() {
       if (lastRequestTime > 0) {
         elapsedMinutes = (currentTime - lastRequestTime) / 60000;
       }
-      
+
       const { message: responseMessage, usage } = await callLLM(
         messages,
-        tools
+        tools,
       );
       lastRequestTime = Date.now();
 
@@ -146,10 +146,10 @@ async function processTurn() {
     } catch (error) {
       console.error(
         "\n\x1b[31mError during agent execution:\x1b[0m",
-        error.message
+        error.message,
       );
       console.log(
-        "The current turn has been aborted due to an error. You can try again or enter a new command."
+        "The current turn has been aborted due to an error. You can try again or enter a new command.",
       );
       turnFinished = true;
     }
@@ -161,8 +161,8 @@ function handleUsage(usage, elapsedMinutes) {
     totalCost += usage.cost;
     console.log(
       `Cost: $${usage.cost.toFixed(
-        6
-      )} | Total Session Cost: $${totalCost.toFixed(6)}`
+        6,
+      )} | Total Session Cost: $${totalCost.toFixed(6)}`,
     );
   }
 
@@ -188,8 +188,8 @@ function handleUsage(usage, elapsedMinutes) {
         : "Cache TTL expired";
     console.log(
       `\x1b[31mWARNING: Cached tokens dropped to 0! (Elapsed: ${elapsedMinutes.toFixed(
-        1
-      )} minutes). Cause: ${reason}.\x1b[0m`
+        1,
+      )} minutes). Cause: ${reason}.\x1b[0m`,
     );
   }
 }

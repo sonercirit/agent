@@ -1,43 +1,93 @@
 # Agent
 
-A powerful agentic AI assistant using OpenRouter and JSDoc.
+A powerful agentic AI assistant designed for high reasoning and complex tasks. It supports both OpenRouter and Google Gemini as LLM providers, with a suite of system tools and web search capabilities.
 
 ## Features
 
-- **Provider**: OpenRouter (supports all models).
-- **Optimization**: Prompt caching and context window management (50k limit).
-- **Tools**: Bash tool (can do everything).
+- **Multi-Provider Support**:
+  - **OpenRouter**: Access to a wide range of models (default).
+  - **Google Gemini**: Native support for Gemini models.
+- **Comprehensive Toolset**:
+  - `bash`: Execute any system command (requires caution).
+  - `search_files`: Find files by name pattern.
+  - `search_string`: Search for text within files.
+  - `read_file`: Read file contents (smart line limiting).
+  - `update_file`: Create or update files (supports full overwrite and partial replace).
+  - `google_search`: Perform web searches using Gemini's Grounding feature (implemented via a sub-agent pattern to coexist with function calling).
+- **Optimization**:
+  - **Prompt Caching**: Intelligent cache management to optimize token usage.
 - **Modes**:
-  - `manual` (default): Approve every tool call.
-  - `auto`: Auto-approve tool calls.
-- **Safety**: 1k token output limit on tool calls.
+  - `manual` (default): User approves every tool execution for safety.
+  - `auto`: Autonomous mode where the agent executes tools automatically.
+- **Safety**:
+  - Strict 1k token output limit on tool calls to prevent context flooding.
+  - User confirmation in manual mode.
 
 ## Setup
 
-1. Install dependencies:
+1. **Install dependencies**:
+
    ```bash
    npm install
    ```
-2. Set your OpenRouter API key in `.env`:
+
+2. **Configure Environment**:
+   Create a `.env` file in the root directory and add your API keys:
    ```bash
-   OPENROUTER_API_KEY=your_key_here
+   OPENROUTER_API_KEY=your_openrouter_key
+   GEMINI_API_KEY=your_gemini_key  # Required for Gemini provider or google_search tool
    ```
 
 ## Usage
 
-Run the agent:
+Run the agent using the CLI:
+
+```bash
+node src/index.js [options]
+```
+
+### Options
+
+- `--mode`, `-m`: Operation mode.
+  - `manual` (default): Ask for approval before executing tools.
+  - `auto`: Execute tools automatically.
+- `--model`: Specify the LLM model to use.
+  - Default: `google/gemini-3-pro-preview` (via OpenRouter) or configured default.
+- `--provider`: Choose the LLM provider.
+  - `openrouter` (default)
+  - `gemini`
+
+### Examples
+
+**Run with default settings (OpenRouter, Manual mode):**
 
 ```bash
 node src/index.js
 ```
 
-Options:
-
-- `--mode`: `auto` or `manual` (default: `manual`)
-- `--model`: Specify the model (default: `google/gemini-3-pro-preview`)
-
-Example:
+**Run in autonomous mode with a specific model:**
 
 ```bash
-node src/index.js --mode auto --model "google/gemini-3-pro"
+node src/index.js --mode auto --model "anthropic/claude-4.5-sonnet"
 ```
+
+**Run using Google Gemini provider (Autonomous mode):**
+
+```bash
+node src/index.js --provider gemini --mode auto
+```
+
+## Architecture
+
+The agent uses a loop-based architecture:
+
+1. **Input**: User provides a prompt.
+2. **Reasoning**: The LLM analyzes the request and decides if tools are needed.
+3. **Tool Execution**:
+   - If a tool is called, the agent executes it (after approval in manual mode).
+   - For `google_search`, a specialized sub-agent call is made to Gemini to leverage Grounding without conflicting with standard function calling.
+4. **Response**: The tool output is fed back to the LLM, which generates the final response or decides to take further actions.
+
+## License
+
+ISC

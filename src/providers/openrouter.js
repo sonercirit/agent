@@ -35,7 +35,7 @@ export async function callOpenRouter(messages, tools) {
           method: "POST",
           headers: headers,
           body: JSON.stringify(body),
-        }
+        },
       );
 
       if (!response.ok) {
@@ -51,19 +51,19 @@ export async function callOpenRouter(messages, tools) {
           console.warn(
             `Attempt ${attempt + 1} failed: ${
               response.status
-            } - ${errorText}. Retrying...`
+            } - ${errorText}. Retrying...`,
           );
           attempt++;
           if (attempt < MAX_RETRIES) {
             await new Promise((resolve) =>
-              setTimeout(resolve, 1000 * Math.pow(2, attempt))
+              setTimeout(resolve, 1000 * Math.pow(2, attempt)),
             ); // Exponential backoff
             continue;
           }
         }
 
         throw new Error(
-          `OpenRouter API error: ${response.status} ${response.statusText} - ${errorText}`
+          `OpenRouter API error: ${response.status} ${response.statusText} - ${errorText}`,
         );
       }
 
@@ -81,12 +81,12 @@ export async function callOpenRouter(messages, tools) {
       // If it's a network error (fetch failed), retry
       if (error.name === "TypeError" && error.message === "fetch failed") {
         console.warn(
-          `Attempt ${attempt + 1} failed: Network error. Retrying...`
+          `Attempt ${attempt + 1} failed: Network error. Retrying...`,
         );
         attempt++;
         if (attempt < MAX_RETRIES) {
           await new Promise((resolve) =>
-            setTimeout(resolve, 1000 * Math.pow(2, attempt))
+            setTimeout(resolve, 1000 * Math.pow(2, attempt)),
           );
           continue;
         }

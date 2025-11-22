@@ -33,7 +33,7 @@ async function bash({ command }) {
       `Error executing command:\n${error.message}\nSTDERR:\n${
         error.stderr || ""
       }`,
-      true
+      true,
     );
   }
 }
@@ -93,7 +93,7 @@ async function read_file({ path: filePath, start_line, end_line }) {
     const selectedLines = lines.slice(start, end);
 
     return limitOutput(
-      `(Total lines: ${lines.length})\n` + selectedLines.join("\n")
+      `(Total lines: ${lines.length})\n` + selectedLines.join("\n"),
     );
   } catch (error) {
     return `Error reading file: ${error.message}`;
@@ -238,7 +238,8 @@ export const tools = [
     type: "function",
     function: {
       name: "search_string",
-      description: "Search for a string in files, respecting .gitignore. Returns 5 lines of context around matches.",
+      description:
+        "Search for a string in files, respecting .gitignore. Returns 5 lines of context around matches.",
       parameters: {
         type: "object",
         properties: {

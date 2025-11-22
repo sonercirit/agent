@@ -41,7 +41,7 @@ function mapToolsToGemini(tools) {
   const forceGrounding =
     tools &&
     tools.some(
-      (t) => t.function && t.function.name === "__google_search_trigger__"
+      (t) => t.function && t.function.name === "__google_search_trigger__",
     );
 
   if (forceGrounding) {
@@ -309,7 +309,7 @@ export async function callGemini(messages, tools) {
     console.log("Token Usage:", JSON.stringify(data.usageMetadata, null, 2));
     data.usageMetadata.cost = calculateGeminiCost(
       cleanModelName,
-      data.usageMetadata
+      data.usageMetadata,
     );
   }
 

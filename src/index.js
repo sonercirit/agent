@@ -5,9 +5,9 @@
  * @module index
  */
 
-import { startAgent } from './agent.js';
+import { startAgent } from "./agent.js";
 
-startAgent().catch(err => {
+startAgent().catch((err) => {
   console.error("Fatal error:", err);
   process.exit(1);
 });

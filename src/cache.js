@@ -123,7 +123,7 @@ export function manageCache(messages) {
           });
         }
         console.log(
-          `\x1b[33m[Cache] Checkpoint removed at message ${i}\x1b[0m`
+          `\x1b[33m[Cache] Checkpoint removed at message ${i}\x1b[0m`,
         );
       } else if (!hasCheckpoint && isDesired) {
         // Add checkpoint
@@ -136,7 +136,7 @@ export function manageCache(messages) {
             type: "ephemeral",
           };
           console.log(
-            `\x1b[32m[Cache] Checkpoint added at message ${i} (Role: ${msg.role})\x1b[0m`
+            `\x1b[32m[Cache] Checkpoint added at message ${i} (Role: ${msg.role})\x1b[0m`,
           );
         }
       }
