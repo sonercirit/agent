@@ -6,14 +6,18 @@ A powerful agentic AI assistant designed for high reasoning and complex tasks. I
 
 - **Multi-Provider Support**:
   - **Google Gemini**: Native support for Gemini models (default).
-  - **OpenRouter**: Access to a wide range of models.
+  - **OpenRouter**: Access to a wide range of models (e.g., Claude, GPT-5).
 - **Comprehensive Toolset**:
   - `bash`: Execute any system command (requires caution).
-  - `search_files`: Find files by name pattern.
-  - `search_string`: Search for text within files.
+  - `search_files`: Find files by name pattern (uses `fd`).
+  - `search_string`: Search for text within files (uses `ripgrep`).
   - `read_file`: Read file contents (smart line limiting).
   - `update_file`: Create or update files (supports full overwrite and partial replace).
   - `google_search`: Perform web searches using Gemini's Grounding feature (implemented via a sub-agent pattern to coexist with function calling).
+- **Interactive Editor**:
+  - Custom multiline input editor.
+  - **Ctrl+S** to submit your prompt.
+  - **Ctrl+W** to interrupt the agent during execution.
 - **Optimization**:
   - **Prompt Caching**: Intelligent cache management to optimize token usage.
 - **Modes**:
@@ -24,6 +28,35 @@ A powerful agentic AI assistant designed for high reasoning and complex tasks. I
   - User confirmation in manual mode.
 
 ## Setup
+
+### Prerequisites
+
+- **Node.js**: Version 18 or higher.
+- **External Tools**:
+
+  - `fd` (or `fd-find`): For fast file searching.
+  - `ripgrep` (`rg`): For fast text searching.
+
+  **Installation (macOS):**
+
+  ```bash
+  brew install fd ripgrep
+  ```
+
+  **Installation (Ubuntu/Debian):**
+
+  ```bash
+  sudo apt install fd-find ripgrep
+  ln -s $(which fdfind) ~/.local/bin/fd # Optional: alias fdfind to fd
+  ```
+
+  **Installation (Arch Linux):**
+
+  ```bash
+  sudo pacman -S fd ripgrep
+  ```
+
+### Installation
 
 1. **Install dependencies**:
 
@@ -36,6 +69,7 @@ A powerful agentic AI assistant designed for high reasoning and complex tasks. I
    ```bash
    GEMINI_API_KEY=your_gemini_key          # Required for default Gemini provider
    OPENROUTER_API_KEY=your_openrouter_key  # Required if using OpenRouter provider
+   DEFAULT_MODEL=google/gemini-3-pro-preview # Optional: Override default model
    ```
 
 ## Usage
@@ -45,6 +79,12 @@ Run the agent using the CLI:
 ```bash
 node src/index.js [options]
 ```
+
+### Interactive Controls
+
+- **Ctrl+S**: Send your message to the agent.
+- **Ctrl+W**: Interrupt the agent while it is thinking or executing tools.
+- **Ctrl+C**: Exit the application.
 
 ### Options
 
@@ -89,7 +129,7 @@ node src/index.js --provider openrouter
 
 The agent uses a loop-based architecture:
 
-1. **Input**: User provides a prompt.
+1. **Input**: User provides a prompt via the multiline editor.
 2. **Reasoning**: The LLM analyzes the request and decides if tools are needed.
 3. **Tool Execution**:
    - If a tool is called, the agent executes it (after approval in manual mode).
