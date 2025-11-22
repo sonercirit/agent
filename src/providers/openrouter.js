@@ -19,6 +19,7 @@ export async function callOpenRouter(messages, tools) {
     messages: messages,
     tools: tools,
     usage: { include: true },
+    include_reasoning: true, // Request reasoning tokens
     provider: {
       allow_fallbacks: false,
     },
@@ -73,8 +74,16 @@ export async function callOpenRouter(messages, tools) {
         console.log("Token Usage:", JSON.stringify(data.usage, null, 2));
       }
 
+      const choice = data.choices[0];
+      const message = choice.message;
+
+      // Extract reasoning if present (OpenRouter puts it in 'reasoning' field)
+      if (message.reasoning) {
+        message.reasoning = message.reasoning;
+      }
+
       return {
-        message: data.choices[0].message,
+        message: message,
         usage: data.usage,
       };
     } catch (error) {

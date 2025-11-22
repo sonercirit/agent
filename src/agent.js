@@ -11,6 +11,20 @@ import { manageCache } from "./cache.js";
 import { askApproval } from "./utils.js";
 import { readMultilineInput } from "./editor.js";
 
+const colors = {
+  reset: "\x1b[0m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  magenta: "\x1b[35m",
+  cyan: "\x1b[36m",
+  white: "\x1b[37m",
+  gray: "\x1b[90m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+};
+
 const systemPrompt = `You are a powerful agentic AI assistant.
 You have access to a bash tool which allows you to do almost anything on the system.
 You should use this tool to accomplish the user's requests.
@@ -30,12 +44,12 @@ let lastRequestTime = 0;
  */
 export async function startAgent() {
   console.log(
-    `Agent started in ${config.mode} mode using model ${config.model}`,
+    `${colors.cyan}Agent started in ${config.mode} mode using model ${config.model}${colors.reset}`,
   );
-  console.log("Type 'exit' to quit.");
+  console.log(`${colors.dim}Type 'exit' to quit.${colors.reset}`);
 
   while (true) {
-    console.log("User (Ctrl+S to send):");
+    console.log(`\n${colors.bold}${colors.white}User (Ctrl+S to send):${colors.reset}`);
     const content = await readMultilineInput();
 
     if (content.trim().toLowerCase() === "exit") {
@@ -62,7 +76,7 @@ async function processTurn() {
     if (key.ctrl && key.name === "w") {
       interrupted = true;
       process.stdout.write(
-        "\nUser requested interrupt. Stopping after current step...\n",
+        `\n${colors.red}User requested interrupt. Stopping after current step...${colors.reset}\n`,
       );
     }
     if (key.ctrl && key.name === "c") {
@@ -79,7 +93,7 @@ async function processTurn() {
 
   try {
     while (!turnFinished && !interrupted) {
-      console.log("Thinking... (Ctrl+W to interrupt)");
+      console.log(`${colors.dim}Thinking... (Ctrl+W to interrupt)${colors.reset}`);
       try {
         // Manage cache checkpoints before calling LLM
         manageCache(messages);
@@ -107,20 +121,28 @@ async function processTurn() {
           break;
         }
 
+        // Show thinking tokens if available
+        if (responseMessage.reasoning || responseMessage.reasoning_content) {
+          const thinking = responseMessage.reasoning || responseMessage.reasoning_content;
+          console.log(`\n${colors.gray}=== Thinking Process ===${colors.reset}`);
+          console.log(`${colors.gray}${thinking}${colors.reset}`);
+          console.log(`${colors.gray}========================${colors.reset}\n`);
+        }
+
         if (responseMessage.tool_calls) {
           await handleToolCalls(responseMessage.tool_calls);
           // Loop continues to let the model respond to the tool output
         } else {
-          console.log(`Agent: ${responseMessage.content}`);
+          console.log(`${colors.green}Agent:${colors.reset} ${responseMessage.content}`);
           turnFinished = true;
         }
       } catch (error) {
         console.error(
-          "\n\x1b[31mError during agent execution:\x1b[0m",
+          `\n${colors.red}Error during agent execution:${colors.reset}`,
           error.message,
         );
         console.log(
-          "The current turn has been aborted due to an error. You can try again or enter a new command.",
+          `${colors.yellow}The current turn has been aborted due to an error. You can try again or enter a new command.${colors.reset}`,
         );
         turnFinished = true;
       }
@@ -138,9 +160,9 @@ function handleUsage(usage, elapsedMinutes) {
   if (usage.cost) {
     totalCost += usage.cost;
     console.log(
-      `Cost: $${usage.cost.toFixed(
+      `${colors.cyan}Cost: $${usage.cost.toFixed(
         6,
-      )} | Total Session Cost: $${totalCost.toFixed(6)}`,
+      )} | Total Session Cost: $${totalCost.toFixed(6)}${colors.reset}`,
     );
   }
 
@@ -165,9 +187,9 @@ function handleUsage(usage, elapsedMinutes) {
         ? "Prefix mismatch or Checkpoint limit"
         : "Cache TTL expired";
     console.log(
-      `\x1b[31mWARNING: Cached tokens dropped to 0! (Elapsed: ${elapsedMinutes.toFixed(
+      `${colors.red}WARNING: Cached tokens dropped to 0! (Elapsed: ${elapsedMinutes.toFixed(
         1,
-      )} minutes). Cause: ${reason}.\x1b[0m`,
+      )} minutes). Cause: ${reason}.${colors.reset}`,
     );
   }
 }
@@ -179,7 +201,7 @@ async function handleToolCalls(toolCalls) {
     const toolFunc = toolImplementations[functionName];
 
     if (toolFunc) {
-      console.log(`Tool Call: ${functionName}(${JSON.stringify(args)})`);
+      console.log(`${colors.yellow}Tool Call: ${functionName}(${JSON.stringify(args)})${colors.reset}`);
 
       let approved = true;
       if (config.mode === "manual") {
@@ -192,7 +214,7 @@ async function handleToolCalls(toolCalls) {
           input: process.stdin,
           output: process.stdout,
         });
-        approved = await askApproval(rl, "Execute this command?");
+        approved = await askApproval(rl, `${colors.yellow}Execute this command?${colors.reset}`);
         rl.close();
 
         if (wasRaw && process.stdin.setRawMode) {
@@ -202,13 +224,13 @@ async function handleToolCalls(toolCalls) {
 
       let result;
       if (approved) {
-        console.log("Executing...");
+        console.log(`${colors.dim}Executing...${colors.reset}`);
         result = await toolFunc(args);
       } else {
         result = "User denied execution of this command.";
       }
 
-      console.log(`Result: ${result.substring(0, 100)}...`); // Log brief result
+      console.log(`${colors.blue}Result: ${result.substring(0, 100)}...${colors.reset}`); // Log brief result
 
       messages.push({
         role: "tool",

@@ -321,12 +321,16 @@ export async function callGemini(messages, tools) {
 
   const contentParts = candidate.content.parts || [];
   let content = "";
+  let reasoning = "";
   const toolCalls = [];
 
   for (const part of contentParts) {
-    if (part.text) {
+    if (part.thought) {
+      reasoning += part.text + "\n";
+    } else if (part.text) {
       content += part.text;
     }
+
     if (part.functionCall) {
       toolCalls.push({
         id: `call_${Math.random().toString(36).substr(2, 9)}`,
@@ -337,14 +341,12 @@ export async function callGemini(messages, tools) {
         },
       });
     }
-    // Check for thought parts if present (though we rely on preserving raw parts for history)
-    // If there are other part types, we'll just ignore them in the 'content' string
-    // but they are preserved in provider_metadata.
   }
 
   const message = {
     role: "assistant",
     content: content || null,
+    reasoning: reasoning || null,
     provider_metadata: {
       gemini_parts: contentParts, // Preserve original parts including thoughts/signatures
       grounding_metadata: candidate.groundingMetadata, // Capture grounding metadata
