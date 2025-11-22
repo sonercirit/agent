@@ -155,6 +155,60 @@ function mapMessagesToGemini(messages) {
 }
 
 /**
+ * Calculates the cost of the Gemini API call.
+ * @param {string} model - The model name.
+ * @param {Object} usage - The usage metadata.
+ * @returns {number} The calculated cost in USD.
+ */
+function calculateGeminiCost(model, usage) {
+  if (!usage) return 0;
+
+  const isPro = model.includes("pro");
+  const promptTokens = usage.promptTokenCount || 0;
+  const outputTokens =
+    (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0);
+  const cachedTokens = usage.cachedContentTokenCount || 0;
+
+  // Effective input tokens (excluding cached which have their own rate)
+  // Note: We assume promptTokenCount includes cachedTokens.
+  // If it doesn't, this logic might need adjustment, but typically Total = Prompt + Candidates.
+  // And Prompt = Uncached + Cached.
+  const regularInputTokens = Math.max(0, promptTokens - cachedTokens);
+
+  let inputRate, outputRate, cachedRate;
+
+  if (isPro) {
+    // Gemini 3 Pro Pricing
+    if (promptTokens > 200000) {
+      inputRate = 4.0;
+      outputRate = 18.0;
+      cachedRate = 0.4;
+    } else {
+      inputRate = 2.0;
+      outputRate = 12.0;
+      cachedRate = 0.2;
+    }
+  } else {
+    // Gemini 1.5 Flash Pricing
+    if (promptTokens > 128000) {
+      inputRate = 0.15;
+      outputRate = 0.6;
+      cachedRate = 0.0375;
+    } else {
+      inputRate = 0.075;
+      outputRate = 0.3;
+      cachedRate = 0.01875;
+    }
+  }
+
+  const inputCost = (regularInputTokens / 1_000_000) * inputRate;
+  const outputCost = (outputTokens / 1_000_000) * outputRate;
+  const cachedCost = (cachedTokens / 1_000_000) * cachedRate;
+
+  return inputCost + outputCost + cachedCost;
+}
+
+/**
  * Calls the Gemini API.
  * @param {Array} messages - The conversation history.
  * @param {Array} tools - The available tools.
@@ -203,6 +257,10 @@ export async function callGemini(messages, tools) {
 
   if (data.usageMetadata) {
     console.log("Token Usage:", JSON.stringify(data.usageMetadata, null, 2));
+    data.usageMetadata.cost = calculateGeminiCost(
+      cleanModelName,
+      data.usageMetadata
+    );
   }
 
   // Map response back to OpenAI format
