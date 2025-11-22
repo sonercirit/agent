@@ -15,12 +15,13 @@ export function readMultilineInput() {
       let vx = 0;
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        const lineRows = Math.floor(line.length / width) + 1;
+        const lineRows = line.length > 0 ? Math.ceil(line.length / width) : 1;
 
         if (i === cy) {
-          const cursorRowInLine = Math.floor(cx / width);
+          const cursorRowInLine = cx === 0 ? 0 : Math.floor((cx - 1) / width);
           vy += cursorRowInLine;
           vx = cx % width;
+          if (cx > 0 && vx === 0) vx = width;
           break;
         }
         vy += lineRows;
@@ -48,37 +49,9 @@ export function readMultilineInput() {
       // We are currently at the end of the content.
       // We need to calculate the visual height of the whole content to know where we are.
 
-      let totalVisualHeight = 0;
-      for (const line of lines) {
-        totalVisualHeight += Math.floor(line.length / width) + 1;
-      }
-      // The cursor is at the end of the last line printed.
-      // Actually, stdout.write leaves cursor at the end.
-      // So we are at (end_x, totalVisualHeight - 1).
-
-      // Let's move back to start
-      // We need to move up by (totalVisualHeight - 1) ?
-      // Wait, if totalVisualHeight is 1, we are on the same line.
-      // If we printed 3 lines, we are on the 3rd line (index 2).
-      // So we move up by (totalVisualHeight - 1).
-
-      // However, if the last line wraps exactly to the end, the cursor might be on the next line?
-      // No, usually it stays at the end.
-
-      // Let's just move to (0,0) relative to start
-      // We know we just printed 'content'.
-      // We can calculate the visual height of 'content'.
-
-      // Actually, simpler:
-      // We are at the end.
-      // We want to go to visualPos.
-      // We can go to start, then to visualPos.
-
-      // To go to start from end:
-      // We need to know the visual height of the entire block.
       let totalRows = 0;
       for (let line of lines) {
-        totalRows += Math.floor(line.length / width) + 1;
+        totalRows += line.length > 0 ? Math.ceil(line.length / width) : 1;
       }
 
       // If the last character is at the exact end of the width, does it wrap?
