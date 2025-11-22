@@ -14,6 +14,7 @@ A powerful agentic AI assistant designed for high reasoning and complex tasks. I
   - `read_file`: Read file contents (smart line limiting).
   - `update_file`: Create or update files (supports full overwrite and partial replace).
   - `google_search`: Perform web searches using Gemini's Grounding feature (implemented via a sub-agent pattern to coexist with function calling).
+  - `describe_image`: Describe image files or images from the clipboard (uses Gemini Vision).
 - **Interactive Editor**:
   - Custom multiline input editor.
   - **Ctrl+S** to submit your prompt.
@@ -35,24 +36,28 @@ A powerful agentic AI assistant designed for high reasoning and complex tasks. I
 - **External Tools**:
   - `fd` (or `fd-find`): For fast file searching.
   - `ripgrep` (`rg`): For fast text searching.
+  - **Clipboard Tools** (Optional, for `describe_image` clipboard support):
+    - Linux (Wayland): `wl-clipboard` (provides `wl-paste`)
+    - Linux (X11): `xclip`
+    - macOS: `pngpaste`
 
-  **Installation (macOS):**
+  **Installation (Arch Linux):**
 
   ```bash
-  brew install fd ripgrep
+  sudo pacman -S fd ripgrep xclip wl-clipboard
   ```
 
   **Installation (Ubuntu/Debian):**
 
   ```bash
-  sudo apt install fd-find ripgrep
+  sudo apt install fd-find ripgrep xclip wl-clipboard
   ln -s $(which fdfind) ~/.local/bin/fd # Optional: alias fdfind to fd
   ```
 
-  **Installation (Arch Linux):**
+  **Installation (macOS):**
 
   ```bash
-  sudo pacman -S fd ripgrep
+  brew install fd ripgrep pngpaste
   ```
 
 ### Installation
