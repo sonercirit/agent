@@ -141,7 +141,7 @@ async function processTurn() {
         if (responseMessage.tool_calls) {
           await handleToolCalls(responseMessage.tool_calls);
           // Loop continues to let the model respond to the tool output
-        } else {
+        } else if (responseMessage.content && responseMessage.content.trim()) {
           console.log(
             `${colors.green}Agent:${colors.reset} ${responseMessage.content}`,
           );
