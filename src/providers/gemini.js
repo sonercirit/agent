@@ -1,0 +1,252 @@
+import { config } from "../config.js";
+
+/**
+ * Recursively converts schema types to uppercase for Gemini compatibility.
+ * @param {Object} schema - The schema object.
+ * @returns {Object} The schema with uppercase types.
+ */
+function fixSchemaTypes(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+
+  const newSchema = { ...schema };
+
+  if (newSchema.type && typeof newSchema.type === "string") {
+    newSchema.type = newSchema.type.toUpperCase();
+  }
+
+  if (newSchema.properties) {
+    const newProps = {};
+    for (const [key, prop] of Object.entries(newSchema.properties)) {
+      newProps[key] = fixSchemaTypes(prop);
+    }
+    newSchema.properties = newProps;
+  }
+
+  if (newSchema.items) {
+    newSchema.items = fixSchemaTypes(newSchema.items);
+  }
+
+  return newSchema;
+}
+
+/**
+ * Maps OpenAI tools format to Gemini tools format.
+ * @param {Array} tools - OpenAI format tools.
+ * @returns {Array} Gemini format tools.
+ */
+function mapToolsToGemini(tools) {
+  if (!tools || tools.length === 0) return undefined;
+  return [
+    {
+      function_declarations: tools.map((t) => ({
+        name: t.function.name,
+        description: t.function.description,
+        parameters: fixSchemaTypes(t.function.parameters),
+      })),
+    },
+  ];
+}
+
+/**
+ * Helper to format content into Gemini parts.
+ * Handles string or array of content parts.
+ * @param {string|Array} content
+ * @returns {Array} Array of Gemini parts
+ */
+function formatGeminiParts(content) {
+  if (!content) return [];
+  if (typeof content === "string") {
+    return [{ text: content }];
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return { text: part };
+        if (part.type === "text") return { text: part.text };
+        // For now, we skip image_url as we haven't implemented it fully
+        // and passing it as text might be confusing.
+        // If strictly text needed, we could ignore non-text parts.
+        return null;
+      })
+      .filter(Boolean);
+  }
+  return [{ text: String(content) }];
+}
+
+/**
+ * Maps OpenAI messages format to Gemini contents format.
+ * @param {Array} messages - OpenAI format messages.
+ * @returns {Object} { contents, systemInstruction }
+ */
+function mapMessagesToGemini(messages) {
+  let systemInstruction = undefined;
+  const contents = [];
+
+  for (const msg of messages) {
+    if (msg.role === "system") {
+      systemInstruction = { parts: formatGeminiParts(msg.content) };
+    } else if (msg.role === "user") {
+      contents.push({
+        role: "user",
+        parts: formatGeminiParts(msg.content),
+      });
+    } else if (msg.role === "assistant") {
+      // If we have preserved Gemini parts from a previous turn, use them directly
+      if (msg.provider_metadata && msg.provider_metadata.gemini_parts) {
+        contents.push({
+          role: "model",
+          parts: msg.provider_metadata.gemini_parts,
+        });
+      } else {
+        // Fallback to reconstruction
+        const parts = [];
+        if (msg.content) {
+          parts.push(...formatGeminiParts(msg.content));
+        }
+        if (msg.tool_calls) {
+          for (const toolCall of msg.tool_calls) {
+            parts.push({
+              functionCall: {
+                name: toolCall.function.name,
+                args: JSON.parse(toolCall.function.arguments),
+              },
+            });
+          }
+        }
+        contents.push({
+          role: "model",
+          parts: parts,
+        });
+      }
+    } else if (msg.role === "tool") {
+      contents.push({
+        role: "function", // Internal mapping helper, will be converted to user
+        parts: [
+          {
+            functionResponse: {
+              name: msg.name,
+              response: { result: msg.content },
+            },
+          },
+        ],
+      });
+    }
+  }
+
+  // Post-processing to merge consecutive roles if necessary
+  const finalContents = [];
+  for (const item of contents) {
+    if (item.role === "function") {
+      const last = finalContents[finalContents.length - 1];
+      if (last && last.role === "user") {
+        last.parts.push(item.parts[0]);
+      } else {
+        finalContents.push({
+          role: "user",
+          parts: item.parts,
+        });
+      }
+    } else {
+      finalContents.push(item);
+    }
+  }
+
+  return { contents: finalContents, systemInstruction };
+}
+
+/**
+ * Calls the Gemini API.
+ * @param {Array} messages - The conversation history.
+ * @param {Array} tools - The available tools.
+ * @returns {Promise<Object>} The response message.
+ */
+export async function callGemini(messages, tools) {
+  if (!config.geminiApiKey) {
+    throw new Error("GEMINI_API_KEY is not set.");
+  }
+
+  const { contents, systemInstruction } = mapMessagesToGemini(messages);
+  const geminiTools = mapToolsToGemini(tools);
+
+  // Construct URL
+  const modelName = config.model.includes("gemini")
+    ? config.model
+    : "gemini-1.5-flash";
+  // Strip 'google/' if present for the API call if usage assumes openrouter naming
+  const cleanModelName = modelName.replace("google/", "");
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModelName}:generateContent?key=${config.geminiApiKey}`;
+
+  const body = {
+    contents,
+    system_instruction: systemInstruction,
+    tools: geminiTools,
+    generationConfig: {
+      temperature: 0.0, // default
+    },
+  };
+
+  // console.log("Gemini Request Body:", JSON.stringify(body, null, 2));
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Gemini API Error: ${response.status} - ${text}`);
+  }
+
+  const data = await response.json();
+
+  if (data.usageMetadata) {
+    console.log("Token Usage:", JSON.stringify(data.usageMetadata, null, 2));
+  }
+
+  // Map response back to OpenAI format
+  const candidate = data.candidates && data.candidates[0];
+  if (!candidate) {
+    throw new Error("No candidates returned from Gemini");
+  }
+
+  const contentParts = candidate.content.parts || [];
+  let content = "";
+  const toolCalls = [];
+
+  for (const part of contentParts) {
+    if (part.text) {
+      content += part.text;
+    }
+    if (part.functionCall) {
+      toolCalls.push({
+        id: `call_${Math.random().toString(36).substr(2, 9)}`,
+        type: "function",
+        function: {
+          name: part.functionCall.name,
+          arguments: JSON.stringify(part.functionCall.args),
+        },
+      });
+    }
+    // Check for thought parts if present (though we rely on preserving raw parts for history)
+    // If there are other part types, we'll just ignore them in the 'content' string
+    // but they are preserved in provider_metadata.
+  }
+
+  const message = {
+    role: "assistant",
+    content: content || null,
+    provider_metadata: {
+      gemini_parts: contentParts, // Preserve original parts including thoughts/signatures
+    },
+  };
+  if (toolCalls.length > 0) {
+    message.tool_calls = toolCalls;
+  }
+
+  return {
+    message,
+    usage: data.usageMetadata,
+  };
+}

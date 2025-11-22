@@ -94,15 +94,15 @@ async function processTurn() {
           console.log(`Total Session Cost: $${totalCost.toFixed(6)}`);
         }
 
-        const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
+        const cachedTokens = usage.prompt_tokens_details?.cached_tokens || usage.cachedContentTokenCount || 0;
         if (cachedTokens > 0) {
           hasSeenCachedTokens = true;
         }
 
         if (hasSeenCachedTokens && cachedTokens === 0) {
-          // Gemini cache TTL is 5 minutes, Anthropic is 60 minutes
-          const isGemini = config.model.includes('gemini');
-          const cacheTTL = isGemini ? 5.0 : 60.0;
+          // Gemini cache TTL is 60 minutes (default), Anthropic is 5 minutes
+          const isGemini = config.provider === 'gemini' || config.model.includes('gemini');
+          const cacheTTL = isGemini ? 60.0 : 5.0;
           const reason = elapsedMinutes < (cacheTTL - 1) ? "Prefix mismatch or Checkpoint limit" : "Cache TTL expired";
           console.log(`\x1b[31mWARNING: Cached tokens dropped to 0! (Elapsed: ${elapsedMinutes.toFixed(1)} minutes). Cause: ${reason}.\x1b[0m`);
         }
