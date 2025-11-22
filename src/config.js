@@ -23,7 +23,7 @@ const argv = yargs(hideBin(process.argv))
   .option("provider", {
     describe: "LLM Provider",
     choices: ["openrouter", "gemini"],
-    default: "openrouter",
+    default: "gemini",
   })
   .help()
   .parse();

@@ -5,8 +5,8 @@ A powerful agentic AI assistant designed for high reasoning and complex tasks. I
 ## Features
 
 - **Multi-Provider Support**:
-  - **OpenRouter**: Access to a wide range of models (default).
-  - **Google Gemini**: Native support for Gemini models.
+  - **Google Gemini**: Native support for Gemini models (default).
+  - **OpenRouter**: Access to a wide range of models.
 - **Comprehensive Toolset**:
   - `bash`: Execute any system command (requires caution).
   - `search_files`: Find files by name pattern.
@@ -34,8 +34,8 @@ A powerful agentic AI assistant designed for high reasoning and complex tasks. I
 2. **Configure Environment**:
    Create a `.env` file in the root directory and add your API keys:
    ```bash
-   OPENROUTER_API_KEY=your_openrouter_key
-   GEMINI_API_KEY=your_gemini_key  # Required for Gemini provider or google_search tool
+   GEMINI_API_KEY=your_gemini_key          # Required for default Gemini provider
+   OPENROUTER_API_KEY=your_openrouter_key  # Required if using OpenRouter provider
    ```
 
 ## Usage
@@ -52,29 +52,37 @@ node src/index.js [options]
   - `manual` (default): Ask for approval before executing tools.
   - `auto`: Execute tools automatically.
 - `--model`: Specify the LLM model to use.
-  - Default: `google/gemini-3-pro-preview` (via OpenRouter) or configured default.
+  - Default: `google/gemini-3-pro-preview` (via Gemini or OpenRouter) or configured default.
 - `--provider`: Choose the LLM provider.
-  - `openrouter` (default)
-  - `gemini`
+  - `gemini` (default)
+  - `openrouter`
+
+### Recommended Settings
+
+For the most efficient workflow, it is recommended to run the agent in **autonomous mode**. This allows the agent to chain multiple tools and reasoning steps without interruption.
+
+```bash
+node src/index.js --mode auto
+```
 
 ### Examples
 
-**Run with default settings (OpenRouter, Manual mode):**
+**Run with default settings (Gemini, Manual mode):**
 
 ```bash
 node src/index.js
 ```
 
-**Run in autonomous mode with a specific model:**
+**Run in autonomous mode with a specific model (via OpenRouter):**
 
 ```bash
-node src/index.js --mode auto --model "anthropic/claude-4.5-sonnet"
+node src/index.js --mode auto --provider openrouter --model "anthropic/claude-4.5-sonnet"
 ```
 
-**Run using Google Gemini provider (Autonomous mode):**
+**Run using OpenRouter provider:**
 
 ```bash
-node src/index.js --provider gemini --mode auto
+node src/index.js --provider openrouter
 ```
 
 ## Architecture
