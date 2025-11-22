@@ -49,7 +49,9 @@ export async function startAgent() {
   console.log(`${colors.dim}Type 'exit' to quit.${colors.reset}`);
 
   while (true) {
-    console.log(`\n${colors.bold}${colors.white}User (Ctrl+S to send):${colors.reset}`);
+    console.log(
+      `\n${colors.bold}${colors.white}User (Ctrl+S to send):${colors.reset}`,
+    );
     const content = await readMultilineInput();
 
     if (content.trim().toLowerCase() === "exit") {
@@ -93,7 +95,9 @@ async function processTurn() {
 
   try {
     while (!turnFinished && !interrupted) {
-      console.log(`${colors.dim}Thinking... (Ctrl+W to interrupt)${colors.reset}`);
+      console.log(
+        `${colors.dim}Thinking... (Ctrl+W to interrupt)${colors.reset}`,
+      );
       try {
         // Manage cache checkpoints before calling LLM
         manageCache(messages);
@@ -123,17 +127,24 @@ async function processTurn() {
 
         // Show thinking tokens if available
         if (responseMessage.reasoning || responseMessage.reasoning_content) {
-          const thinking = responseMessage.reasoning || responseMessage.reasoning_content;
-          console.log(`\n${colors.gray}=== Thinking Process ===${colors.reset}`);
+          const thinking =
+            responseMessage.reasoning || responseMessage.reasoning_content;
+          console.log(
+            `\n${colors.gray}=== Thinking Process ===${colors.reset}`,
+          );
           console.log(`${colors.gray}${thinking}${colors.reset}`);
-          console.log(`${colors.gray}========================${colors.reset}\n`);
+          console.log(
+            `${colors.gray}========================${colors.reset}\n`,
+          );
         }
 
         if (responseMessage.tool_calls) {
           await handleToolCalls(responseMessage.tool_calls);
           // Loop continues to let the model respond to the tool output
         } else {
-          console.log(`${colors.green}Agent:${colors.reset} ${responseMessage.content}`);
+          console.log(
+            `${colors.green}Agent:${colors.reset} ${responseMessage.content}`,
+          );
           turnFinished = true;
         }
       } catch (error) {
@@ -201,7 +212,9 @@ async function handleToolCalls(toolCalls) {
     const toolFunc = toolImplementations[functionName];
 
     if (toolFunc) {
-      console.log(`${colors.yellow}Tool Call: ${functionName}(${JSON.stringify(args)})${colors.reset}`);
+      console.log(
+        `${colors.yellow}Tool Call: ${functionName}(${JSON.stringify(args)})${colors.reset}`,
+      );
 
       let approved = true;
       if (config.mode === "manual") {
@@ -214,7 +227,10 @@ async function handleToolCalls(toolCalls) {
           input: process.stdin,
           output: process.stdout,
         });
-        approved = await askApproval(rl, `${colors.yellow}Execute this command?${colors.reset}`);
+        approved = await askApproval(
+          rl,
+          `${colors.yellow}Execute this command?${colors.reset}`,
+        );
         rl.close();
 
         if (wasRaw && process.stdin.setRawMode) {
@@ -230,7 +246,9 @@ async function handleToolCalls(toolCalls) {
         result = "User denied execution of this command.";
       }
 
-      console.log(`${colors.blue}Result: ${result.substring(0, 100)}...${colors.reset}`); // Log brief result
+      console.log(
+        `${colors.blue}Result: ${result.substring(0, 100)}...${colors.reset}`,
+      ); // Log brief result
 
       messages.push({
         role: "tool",

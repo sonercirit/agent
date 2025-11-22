@@ -71,7 +71,11 @@ export async function callOpenRouter(messages, tools) {
       const data = await response.json();
 
       if (data.usage) {
-        console.log("\x1b[2mToken Usage:", JSON.stringify(data.usage, null, 2), "\x1b[0m");
+        console.log(
+          "\x1b[2mToken Usage:",
+          JSON.stringify(data.usage, null, 2),
+          "\x1b[0m",
+        );
       }
 
       const choice = data.choices[0];

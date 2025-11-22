@@ -33,7 +33,6 @@ A powerful agentic AI assistant designed for high reasoning and complex tasks. I
 
 - **Node.js**: Version 18 or higher.
 - **External Tools**:
-
   - `fd` (or `fd-find`): For fast file searching.
   - `ripgrep` (`rg`): For fast text searching.
 
