@@ -190,44 +190,64 @@ async function google_search({ query }) {
 /**
  * Describes an image using Gemini 3 Pro Preview.
  */
-async function describe_image({ path: imagePath }) {
-  if (!imagePath) return "Error: 'path' is required.";
+async function describe_image({ path: singlePath, paths }) {
+  if (!singlePath && (!paths || paths.length === 0)) {
+    return "Error: 'path' or 'paths' is required.";
+  }
 
-  let tempFilePath = null;
+  const imagePaths = paths || [singlePath];
+  const tempFiles = [];
+  const parts = [
+    {
+      text: "Describe these images in detail. Identify objects, colors, text, and the overall scene.",
+    },
+  ];
 
   try {
-    if (imagePath === "clipboard") {
-      tempFilePath = path.join("/tmp", `clipboard_${Date.now()}.png`);
-      try {
-        // Try wl-paste first (Wayland)
-        await execAsync(`wl-paste -t image/png > "${tempFilePath}"`);
-      } catch (err) {
+    for (let i = 0; i < imagePaths.length; i++) {
+      let imagePath = imagePaths[i];
+
+      if (imagePath === "clipboard") {
+        const tempFilePath = path.join("/tmp", `clipboard_${Date.now()}_${i}.png`);
+        tempFiles.push(tempFilePath);
         try {
-          // Try xclip (X11)
-          await execAsync(
-            `xclip -selection clipboard -t image/png -o > "${tempFilePath}"`,
-          );
-        } catch (err2) {
-          // Try pngpaste (MacOS)
+          // Try wl-paste first (Wayland)
+          await execAsync(`wl-paste -t image/png > "${tempFilePath}"`);
+        } catch (err) {
           try {
-            await execAsync(`pngpaste "${tempFilePath}"`);
-          } catch (err3) {
-            return `Error reading from clipboard: Could not find wl-paste, xclip, or pngpaste, or failed to get image.`;
+            // Try xclip (X11)
+            await execAsync(
+              `xclip -selection clipboard -t image/png -o > "${tempFilePath}"`,
+            );
+          } catch (err2) {
+            // Try pngpaste (MacOS)
+            try {
+              await execAsync(`pngpaste "${tempFilePath}"`);
+            } catch (err3) {
+              return `Error reading from clipboard: Could not find wl-paste, xclip, or pngpaste, or failed to get image.`;
+            }
           }
         }
+        imagePath = tempFilePath;
       }
-      imagePath = tempFilePath;
+
+      const imageBuffer = await fs.readFile(imagePath);
+      const base64Image = imageBuffer.toString("base64");
+      const ext = path.extname(imagePath).toLowerCase();
+
+      let mimeType = "image/jpeg";
+      if (ext === ".png") mimeType = "image/png";
+      if (ext === ".webp") mimeType = "image/webp";
+      if (ext === ".heic") mimeType = "image/heic";
+      if (ext === ".heif") mimeType = "image/heif";
+
+      parts.push({
+        inline_data: {
+          mime_type: mimeType,
+          data: base64Image,
+        },
+      });
     }
-
-    const imageBuffer = await fs.readFile(imagePath);
-    const base64Image = imageBuffer.toString("base64");
-    const ext = path.extname(imagePath).toLowerCase();
-
-    let mimeType = "image/jpeg";
-    if (ext === ".png") mimeType = "image/png";
-    if (ext === ".webp") mimeType = "image/webp";
-    if (ext === ".heic") mimeType = "image/heic";
-    if (ext === ".heif") mimeType = "image/heif";
 
     const apiKey = config.geminiApiKey;
     if (!apiKey) return "Error: GEMINI_API_KEY is not set.";
@@ -238,17 +258,7 @@ async function describe_image({ path: imagePath }) {
     const payload = {
       contents: [
         {
-          parts: [
-            {
-              text: "Describe this image in detail. Identify objects, colors, text, and the overall scene.",
-            },
-            {
-              inline_data: {
-                mime_type: mimeType,
-                data: base64Image,
-              },
-            },
-          ],
+          parts: parts,
         },
       ],
     };
@@ -258,10 +268,6 @@ async function describe_image({ path: imagePath }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-
-    if (tempFilePath) {
-      await fs.unlink(tempFilePath).catch(() => {});
-    }
 
     if (!response.ok) {
       const text = await response.text();
@@ -275,10 +281,11 @@ async function describe_image({ path: imagePath }) {
 
     return text;
   } catch (error) {
-    if (tempFilePath) {
-      await fs.unlink(tempFilePath).catch(() => {});
-    }
     return `Error describing image: ${error.message}`;
+  } finally {
+    for (const tempFile of tempFiles) {
+      await fs.unlink(tempFile).catch(() => {});
+    }
   }
 }
 
@@ -412,16 +419,20 @@ export const tools = [
     function: {
       name: "describe_image",
       description:
-        "Describe an image file on disk using Gemini 3 Pro Preview. Returns a detailed text description. Can also read from clipboard by passing 'clipboard' as path.",
+        "Describe one or more images. Returns a detailed text description. Can read from clipboard by passing 'clipboard' as one of the paths.",
       parameters: {
         type: "object",
         properties: {
-          path: {
-            type: "string",
-            description: "The path to the image file, or 'clipboard' to read from system clipboard.",
+          paths: {
+            type: "array",
+            items: {
+              type: "string",
+            },
+            description:
+              "Array of paths to image files, or 'clipboard' to read from system clipboard.",
           },
         },
-        required: ["path"],
+        required: ["paths"],
       },
     },
   },
