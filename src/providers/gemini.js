@@ -306,7 +306,7 @@ export async function callGemini(messages, tools) {
   const data = await response.json();
 
   if (data.usageMetadata) {
-    console.log("Token Usage:", JSON.stringify(data.usageMetadata, null, 2));
+    console.log("\x1b[2mToken Usage:", JSON.stringify(data.usageMetadata, null, 2), "\x1b[0m");
     data.usageMetadata.cost = calculateGeminiCost(
       cleanModelName,
       data.usageMetadata,
