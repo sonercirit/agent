@@ -38,22 +38,71 @@ export async function startAgent() {
   );
   console.log("Type 'exit' to quit.");
 
-  const askUser = () => {
-    rl.question("User: ", async (input) => {
-      if (input.toLowerCase() === "exit") {
-        rl.close();
-        return;
-      }
+  // Setup input handling
+  readline.emitKeypressEvents(process.stdin);
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+  }
 
-      messages.push({ role: "user", content: input });
+  let inputLines = [];
+  let isProcessing = false;
 
-      await processTurn();
+  const submitInput = async () => {
+    if (isProcessing) return;
 
-      askUser();
-    });
+    // Add current line buffer if any
+    if (rl.line) {
+      inputLines.push(rl.line);
+      rl.line = "";
+    }
+
+    // Force a visual newline
+    process.stdout.write("\n");
+
+    const content = inputLines.join("\n");
+    inputLines = [];
+
+    if (content.trim().toLowerCase() === "exit") {
+      rl.close();
+      process.exit(0);
+    }
+
+    if (!content.trim()) {
+      rl.prompt();
+      return;
+    }
+
+    isProcessing = true;
+    messages.push({ role: "user", content });
+    await processTurn();
+    isProcessing = false;
+
+    console.log("User (Ctrl+S to send):");
+    rl.setPrompt("");
+    rl.prompt();
   };
 
-  askUser();
+  process.stdin.on("keypress", (str, key) => {
+    if (!key) return;
+
+    // Check for Ctrl+S - commonly used to signal end of input
+    if (key.ctrl && key.name === "s") {
+      submitInput();
+      return;
+    }
+  });
+
+  console.log("User (Ctrl+S to send):");
+  rl.setPrompt("");
+  rl.prompt();
+
+  rl.on("line", async (line) => {
+    if (isProcessing) return;
+
+    inputLines.push(line);
+    rl.setPrompt("");
+    rl.prompt();
+  });
 }
 
 /**
