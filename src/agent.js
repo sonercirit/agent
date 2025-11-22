@@ -56,48 +56,80 @@ export async function startAgent() {
  */
 async function processTurn() {
   let turnFinished = false;
+  let interrupted = false;
 
-  while (!turnFinished) {
-    console.log("Thinking...");
-    try {
-      // Manage cache checkpoints before calling LLM
-      manageCache(messages);
-
-      const currentTime = Date.now();
-      let elapsedMinutes = 0;
-      if (lastRequestTime > 0) {
-        elapsedMinutes = (currentTime - lastRequestTime) / 60000;
-      }
-
-      const { message: responseMessage, usage } = await callLLM(
-        messages,
-        tools,
+  const onKey = (str, key) => {
+    if (key.ctrl && key.name === "w") {
+      interrupted = true;
+      process.stdout.write(
+        "\nUser requested interrupt. Stopping after current step...\n",
       );
-      lastRequestTime = Date.now();
+    }
+    if (key.ctrl && key.name === "c") {
+      process.exit(0);
+    }
+  };
 
-      if (usage) {
-        handleUsage(usage, elapsedMinutes);
-      }
+  // Setup key listener
+  readline.emitKeypressEvents(process.stdin);
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+  }
+  process.stdin.on("keypress", onKey);
 
-      // Add assistant message to history
-      messages.push(responseMessage);
+  try {
+    while (!turnFinished && !interrupted) {
+      console.log("Thinking... (Ctrl+W to interrupt)");
+      try {
+        // Manage cache checkpoints before calling LLM
+        manageCache(messages);
 
-      if (responseMessage.tool_calls) {
-        await handleToolCalls(responseMessage.tool_calls);
-        // Loop continues to let the model respond to the tool output
-      } else {
-        console.log(`Agent: ${responseMessage.content}`);
+        const currentTime = Date.now();
+        let elapsedMinutes = 0;
+        if (lastRequestTime > 0) {
+          elapsedMinutes = (currentTime - lastRequestTime) / 60000;
+        }
+
+        const { message: responseMessage, usage } = await callLLM(
+          messages,
+          tools,
+        );
+        lastRequestTime = Date.now();
+
+        if (usage) {
+          handleUsage(usage, elapsedMinutes);
+        }
+
+        // Add assistant message to history
+        messages.push(responseMessage);
+
+        if (interrupted) {
+          break;
+        }
+
+        if (responseMessage.tool_calls) {
+          await handleToolCalls(responseMessage.tool_calls);
+          // Loop continues to let the model respond to the tool output
+        } else {
+          console.log(`Agent: ${responseMessage.content}`);
+          turnFinished = true;
+        }
+      } catch (error) {
+        console.error(
+          "\n\x1b[31mError during agent execution:\x1b[0m",
+          error.message,
+        );
+        console.log(
+          "The current turn has been aborted due to an error. You can try again or enter a new command.",
+        );
         turnFinished = true;
       }
-    } catch (error) {
-      console.error(
-        "\n\x1b[31mError during agent execution:\x1b[0m",
-        error.message,
-      );
-      console.log(
-        "The current turn has been aborted due to an error. You can try again or enter a new command.",
-      );
-      turnFinished = true;
+    }
+  } finally {
+    // Cleanup key listener
+    process.stdin.removeListener("keypress", onKey);
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
     }
   }
 }
@@ -151,12 +183,21 @@ async function handleToolCalls(toolCalls) {
 
       let approved = true;
       if (config.mode === "manual") {
+        const wasRaw = process.stdin.isRaw;
+        if (wasRaw && process.stdin.setRawMode) {
+          process.stdin.setRawMode(false);
+        }
+
         const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout,
+          input: process.stdin,
+          output: process.stdout,
         });
         approved = await askApproval(rl, "Execute this command?");
         rl.close();
+
+        if (wasRaw && process.stdin.setRawMode) {
+          process.stdin.setRawMode(true);
+        }
       }
 
       let result;
