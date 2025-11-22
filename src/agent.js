@@ -9,11 +9,7 @@ import { callLLM } from "./llm.js";
 import { tools, toolImplementations } from "./tools.js";
 import { manageCache } from "./cache.js";
 import { askApproval } from "./utils.js";
-
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
+import { readMultilineInput } from "./editor.js";
 
 const systemPrompt = `You are a powerful agentic AI assistant.
 You have access to a bash tool which allows you to do almost anything on the system.
@@ -38,71 +34,21 @@ export async function startAgent() {
   );
   console.log("Type 'exit' to quit.");
 
-  // Setup input handling
-  readline.emitKeypressEvents(process.stdin);
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-  }
-
-  let inputLines = [];
-  let isProcessing = false;
-
-  const submitInput = async () => {
-    if (isProcessing) return;
-
-    // Add current line buffer if any
-    if (rl.line) {
-      inputLines.push(rl.line);
-      rl.line = "";
-    }
-
-    // Force a visual newline
-    process.stdout.write("\n");
-
-    const content = inputLines.join("\n");
-    inputLines = [];
+  while (true) {
+    console.log("User (Ctrl+S to send):");
+    const content = await readMultilineInput();
 
     if (content.trim().toLowerCase() === "exit") {
-      rl.close();
       process.exit(0);
     }
 
     if (!content.trim()) {
-      rl.prompt();
-      return;
+      continue;
     }
 
-    isProcessing = true;
     messages.push({ role: "user", content });
     await processTurn();
-    isProcessing = false;
-
-    console.log("User (Ctrl+S to send):");
-    rl.setPrompt("");
-    rl.prompt();
-  };
-
-  process.stdin.on("keypress", (str, key) => {
-    if (!key) return;
-
-    // Check for Ctrl+S - commonly used to signal end of input
-    if (key.ctrl && key.name === "s") {
-      submitInput();
-      return;
-    }
-  });
-
-  console.log("User (Ctrl+S to send):");
-  rl.setPrompt("");
-  rl.prompt();
-
-  rl.on("line", async (line) => {
-    if (isProcessing) return;
-
-    inputLines.push(line);
-    rl.setPrompt("");
-    rl.prompt();
-  });
+  }
 }
 
 /**
@@ -205,7 +151,12 @@ async function handleToolCalls(toolCalls) {
 
       let approved = true;
       if (config.mode === "manual") {
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+        });
         approved = await askApproval(rl, "Execute this command?");
+        rl.close();
       }
 
       let result;
