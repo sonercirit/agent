@@ -143,9 +143,9 @@ async function update_file({ path: filePath, content, old_content }) {
  */
 async function search_web({ query }) {
   if (!query) return "Error: 'query' is required.";
-  // Escape double quotes in query to avoid bash issues
-  const safeQuery = query.replace(/"/g, '\\"');
-  return await bash({ command: `python src/web_search.py "${safeQuery}"` });
+  // Escape single quotes to be safe inside single quotes in bash
+  const safeQuery = query.replace(/'/g, "'\\''");
+  return await bash({ command: `python src/web_search.py '${safeQuery}'` });
 }
 
 export const tools = [
