@@ -1,4 +1,5 @@
 import readline from "readline";
+import { saveClipboardImage } from "./tools.js";
 
 export function readMultilineInput() {
   return new Promise((resolve) => {
@@ -99,8 +100,20 @@ export function readMultilineInput() {
       readline.cursorTo(stdout, visualPos.x);
     };
 
-    const onKey = (str, key) => {
+    const onKey = async (str, key) => {
       if (!key) return;
+
+      if (key.ctrl && key.name === "v") {
+        const imagePath = await saveClipboardImage();
+        if (imagePath) {
+          const line = lines[cursor.y];
+          lines[cursor.y] =
+            line.slice(0, cursor.x) + imagePath + line.slice(cursor.x);
+          cursor.x += imagePath.length;
+          render();
+        }
+        return;
+      }
 
       if (key.ctrl && key.name === "s") {
         cleanup();

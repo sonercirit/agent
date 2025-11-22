@@ -188,6 +188,38 @@ async function google_search({ query }) {
 }
 
 /**
+ * Saves an image from the clipboard to a temporary file.
+ * Returns the path to the temporary file, or null if failed.
+ */
+export async function saveClipboardImage() {
+  const tempFilePath = path.join(
+    "/tmp",
+    `clipboard_${Date.now()}_${Math.random().toString(36).slice(2)}.png`,
+  );
+  try {
+    // Try wl-paste first (Wayland)
+    await execAsync(`wl-paste -t image/png > "${tempFilePath}"`);
+    return tempFilePath;
+  } catch (err) {
+    try {
+      // Try xclip (X11)
+      await execAsync(
+        `xclip -selection clipboard -t image/png -o > "${tempFilePath}"`,
+      );
+      return tempFilePath;
+    } catch (err2) {
+      // Try pngpaste (MacOS)
+      try {
+        await execAsync(`pngpaste "${tempFilePath}"`);
+        return tempFilePath;
+      } catch (err3) {
+        return null;
+      }
+    }
+  }
+}
+
+/**
  * Describes an image using Gemini 3 Pro Preview.
  */
 async function describe_image({ path: singlePath, paths }) {
@@ -208,26 +240,11 @@ async function describe_image({ path: singlePath, paths }) {
       let imagePath = imagePaths[i];
 
       if (imagePath === "clipboard") {
-        const tempFilePath = path.join("/tmp", `clipboard_${Date.now()}_${i}.png`);
-        tempFiles.push(tempFilePath);
-        try {
-          // Try wl-paste first (Wayland)
-          await execAsync(`wl-paste -t image/png > "${tempFilePath}"`);
-        } catch (err) {
-          try {
-            // Try xclip (X11)
-            await execAsync(
-              `xclip -selection clipboard -t image/png -o > "${tempFilePath}"`,
-            );
-          } catch (err2) {
-            // Try pngpaste (MacOS)
-            try {
-              await execAsync(`pngpaste "${tempFilePath}"`);
-            } catch (err3) {
-              return `Error reading from clipboard: Could not find wl-paste, xclip, or pngpaste, or failed to get image.`;
-            }
-          }
+        const tempFilePath = await saveClipboardImage();
+        if (!tempFilePath) {
+          return `Error reading from clipboard: Could not find wl-paste, xclip, or pngpaste, or failed to get image.`;
         }
+        tempFiles.push(tempFilePath);
         imagePath = tempFilePath;
       }
 
