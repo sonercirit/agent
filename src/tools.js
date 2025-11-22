@@ -9,6 +9,7 @@ import fs from "fs/promises";
 import path from "path";
 import { limitOutput } from "./utils.js";
 import { callGemini } from "./providers/gemini.js";
+import { config } from "./config.js";
 
 const execAsync = promisify(exec);
 
@@ -138,67 +139,118 @@ async function update_file({ path: filePath, content, old_content }) {
 }
 
 /**
- * Search the web using Gemini's Grounding feature.
- * This is a special tool that triggers a secondary LLM call with grounding enabled.
+ * Search the web using Google Search Grounding.
+ * Use this to get up-to-date information from the internet.
  */
 async function google_search({ query }) {
+  // This is a placeholder. The actual implementation is handled by the
+  // "googleSearch" tool declaration in the Gemini API request itself.
+  // However, since we are using the "Sub-agent" pattern where the agent calls this tool,
+  // and then we trigger a NEW Gemini request with grounding enabled,
+  // we need to implement that logic here or in the agent loop.
+
+  // Actually, looking at the agent loop, it just calls the tool implementation.
+  // So we need to perform the "grounded request" here.
+
   if (!query) return "Error: 'query' is required.";
 
   try {
-    // We create a temporary message history for this search query
+    // We create a temporary message history for the search
     const searchMessages = [{ role: "user", content: query }];
 
-    // We pass a special "dummy" tool that triggers the grounding logic in mapToolsToGemini
-    const groundingTool = {
-      function: {
-        name: "__google_search_trigger__", // Internal signal
-        description: "Internal trigger",
-        parameters: {},
+    // We call Gemini with the special "googleSearch" tool enabled
+    // We need to bypass the standard tool map and force the googleSearch tool.
+    // Since we can't easily change the `callGemini` signature, we might need to
+    // rely on the `mapToolsToGemini` logic which checks for a special trigger.
+    // But `mapToolsToGemini` checks the *input* tools.
+
+    // Let's look at `mapToolsToGemini` in `src/providers/gemini.js` again.
+    // It checks: `tools.some(t => t.function && t.function.name === "__google_search_trigger__")`
+
+    // So if we pass this special tool, it will enable grounding.
+    const specialTool = [
+      {
+        type: "function",
+        function: {
+          name: "__google_search_trigger__",
+          description: "Trigger Google Search Grounding",
+          parameters: { type: "object", properties: {} },
+        },
       },
-    };
+    ];
 
-    const { message } = await callGemini(searchMessages, [groundingTool]);
+    const { message } = await callGemini(searchMessages, specialTool);
 
-    let result = message.content;
-
-    // Append grounding metadata if available
-    if (
-      message.provider_metadata &&
-      message.provider_metadata.grounding_metadata
-    ) {
-      const metadata = message.provider_metadata.grounding_metadata;
-      if (
-        metadata.searchEntryPoint &&
-        metadata.searchEntryPoint.renderedContent
-      ) {
-        result += `\n\n[Grounding]: ${metadata.searchEntryPoint.renderedContent}`;
-      } else if (metadata.groundingChunks) {
-        result += `\n\n(Verified with Google Search)`;
-      }
-    }
-
-    return result;
+    return message.content || "No results found.";
   } catch (error) {
     return `Error performing Google Search: ${error.message}`;
   }
 }
 
-export const tools = [
-  {
-    type: "function",
-    function: {
-      name: "google_search",
-      description:
-        "Perform a web search using Google Search Grounding. Use this to get up-to-date information from the internet.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "The search query." },
+/**
+ * Describes an image using Gemini 3 Pro Preview.
+ */
+async function describe_image({ path: imagePath }) {
+  if (!imagePath) return "Error: 'path' is required.";
+
+  try {
+    const imageBuffer = await fs.readFile(imagePath);
+    const base64Image = imageBuffer.toString("base64");
+    const ext = path.extname(imagePath).toLowerCase();
+
+    let mimeType = "image/jpeg";
+    if (ext === ".png") mimeType = "image/png";
+    if (ext === ".webp") mimeType = "image/webp";
+    if (ext === ".heic") mimeType = "image/heic";
+    if (ext === ".heif") mimeType = "image/heif";
+
+    const apiKey = config.geminiApiKey;
+    if (!apiKey) return "Error: GEMINI_API_KEY is not set.";
+
+    const model = "gemini-3-pro-preview";
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+    const payload = {
+      contents: [
+        {
+          parts: [
+            {
+              text: "Describe this image in detail. Identify objects, colors, text, and the overall scene.",
+            },
+            {
+              inline_data: {
+                mime_type: mimeType,
+                data: base64Image,
+              },
+            },
+          ],
         },
-        required: ["query"],
-      },
-    },
-  },
+      ],
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return `Error from Gemini API: ${response.status} - ${text}`;
+    }
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!text) return "Error: No description returned from API.";
+
+    return text;
+  } catch (error) {
+    return `Error describing image: ${error.message}`;
+  }
+}
+
+export const tools = [
   {
     type: "function",
     function: {
@@ -243,7 +295,10 @@ export const tools = [
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "The string to search for." },
+          query: {
+            type: "string",
+            description: "The string to search for.",
+          },
         },
         required: ["query"],
       },
@@ -253,11 +308,15 @@ export const tools = [
     type: "function",
     function: {
       name: "read_file",
-      description: "Read the content of a file. Returns up to 100 lines.",
+      description:
+        "Read the content of a file. Returns up to 100 lines.",
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "The path to the file." },
+          path: {
+            type: "string",
+            description: "The path to the file.",
+          },
           start_line: {
             type: "integer",
             description: "Start line number (1-based, inclusive).",
@@ -280,7 +339,10 @@ export const tools = [
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "The path to the file." },
+          path: {
+            type: "string",
+            description: "The path to the file.",
+          },
           content: {
             type: "string",
             description: "The new content to write or to substitute.",
@@ -295,13 +357,50 @@ export const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "google_search",
+      description:
+        "Perform a web search using Google Search Grounding. Use this to get up-to-date information from the internet.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "The search query.",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "describe_image",
+      description:
+        "Describe an image file on disk using Gemini 3 Pro Preview. Returns a detailed text description.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "The path to the image file.",
+          },
+        },
+        required: ["path"],
+      },
+    },
+  },
 ];
 
 export const toolImplementations = {
-  google_search,
   bash,
   search_files,
   search_string,
   read_file,
   update_file,
+  google_search,
+  describe_image,
 };
