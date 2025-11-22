@@ -138,7 +138,31 @@ async function update_file({ path: filePath, content, old_content }) {
   }
 }
 
+/**
+ * Search the web using a python script.
+ */
+async function search_web({ query }) {
+  if (!query) return "Error: 'query' is required.";
+  // Escape double quotes in query to avoid bash issues
+  const safeQuery = query.replace(/"/g, '\\"');
+  return await bash({ command: `python src/web_search.py "${safeQuery}"` });
+}
+
 export const tools = [
+  {
+    type: "function",
+    function: {
+      name: "search_web",
+      description: "Perform a web search using DuckDuckGo.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "The search query." },
+        },
+        required: ["query"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -216,6 +240,7 @@ export const tools = [
 ];
 
 export const toolImplementations = {
+  search_web,
   bash,
   search_files,
   search_string,
