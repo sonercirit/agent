@@ -281,6 +281,8 @@ export async function callGemini(messages, tools) {
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModelName}:generateContent?key=${config.geminiApiKey}`;
 
+  const isThinkingModel = cleanModelName.includes("thinking") || cleanModelName.includes("pro");
+
   const body = {
     contents,
     system_instruction: systemInstruction,
@@ -289,6 +291,14 @@ export async function callGemini(messages, tools) {
       temperature: 0.0, // default
     },
   };
+
+  if (isThinkingModel) {
+    body.generationConfig.thinkingConfig = { 
+      include_thoughts: true,
+      thinking_level: "high"
+    };
+    body.generationConfig.maxOutputTokens = 64000; // Ensure enough tokens for thoughts
+  }
 
   // console.log("Gemini Request Body:", JSON.stringify(body, null, 2));
 
