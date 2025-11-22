@@ -7,23 +7,10 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
-import { config } from "./config.js";
+import { limitOutput } from "./utils.js";
+import { callGemini } from "./providers/gemini.js";
 
 const execAsync = promisify(exec);
-
-/**
- * Helper to enforce output limits.
- */
-function limitOutput(output, isError = false) {
-  const charLimit = config.toolOutputLimit * 4;
-  if (output.length > charLimit) {
-    return (
-      output.substring(0, charLimit) +
-      `\n... (Output truncated. Total length: ${output.length} chars.)`
-    );
-  }
-  return output;
-}
 
 /**
  * Executes a bash command.
@@ -158,36 +145,10 @@ async function google_search({ query }) {
   if (!query) return "Error: 'query' is required.";
 
   try {
-    // We need to dynamically import callGemini to avoid circular dependencies if it were in a shared module,
-    // but here we are in tools.js.
-    // However, callGemini is in providers/gemini.js which depends on config.js.
-    // tools.js also depends on config.js.
-    // We need to avoid tools.js -> gemini.js -> tools.js loop.
-    //
-    // Ideally, we'd move callGemini to a separate module or pass the LLM caller to the tools.
-    // For now, we'll do a dynamic import inside the function to break the cycle at load time.
-
-    const { callGemini } = await import("./providers/gemini.js");
-
     // We create a temporary message history for this search query
     const searchMessages = [{ role: "user", content: query }];
 
-    // We call Gemini WITHOUT passing any tools, but explicitly enabling Google Search Grounding
-    // (which we need to support in callGemini via a flag or special logic).
-    // Since callGemini derives tools from the passed 'tools' array, we can pass a special "grounding-only" signal
-    // or we can modify callGemini to accept an options object.
-
-    // But wait, callGemini's signature is (messages, tools).
-    // If we pass an empty tools array [], mapToolsToGemini will return empty or default.
-    // We need to signal to mapToolsToGemini to enable googleSearch.
-
-    // Let's pass a special "dummy" tool that triggers the grounding logic in mapToolsToGemini if we modify it,
-    // OR simpler: we modify callGemini to accept an optional 'forceGrounding' param,
-    // but we can't change the signature easily without affecting other callers.
-
-    // Alternative: We just use a dedicated internal helper or modify callGemini to look for a specific flag in the tools list.
-
-    // Let's use a special tool object that mapToolsToGemini recognizes.
+    // We pass a special "dummy" tool that triggers the grounding logic in mapToolsToGemini
     const groundingTool = {
       function: {
         name: "__google_search_trigger__", // Internal signal
@@ -212,8 +173,6 @@ async function google_search({ query }) {
       ) {
         result += `\n\n[Grounding]: ${metadata.searchEntryPoint.renderedContent}`;
       } else if (metadata.groundingChunks) {
-        // Basic reconstruction of citations if needed, but usually the content already has them integrated
-        // or we just let the model's answer stand.
         result += `\n\n(Verified with Google Search)`;
       }
     }
