@@ -53,7 +53,7 @@ async function search_string({ query }) {
   if (!query) return "Error: 'query' is required.";
   // Explicitly search the current directory to ensure it doesn't wait for stdin
   // -- is used to stop argument parsing, ensuring 'query' isn't interpreted as a flag
-  return await bash({ command: `rg -n -- "${query}" .` });
+  return await bash({ command: `rg -n -C 5 -- "${query}" .` });
 }
 
 /**
@@ -238,7 +238,7 @@ export const tools = [
     type: "function",
     function: {
       name: "search_string",
-      description: "Search for a string in files, respecting .gitignore.",
+      description: "Search for a string in files, respecting .gitignore. Returns 5 lines of context around matches.",
       parameters: {
         type: "object",
         properties: {
