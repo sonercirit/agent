@@ -193,7 +193,32 @@ async function google_search({ query }) {
 async function describe_image({ path: imagePath }) {
   if (!imagePath) return "Error: 'path' is required.";
 
+  let tempFilePath = null;
+
   try {
+    if (imagePath === "clipboard") {
+      tempFilePath = path.join("/tmp", `clipboard_${Date.now()}.png`);
+      try {
+        // Try wl-paste first (Wayland)
+        await execAsync(`wl-paste -t image/png > "${tempFilePath}"`);
+      } catch (err) {
+        try {
+          // Try xclip (X11)
+          await execAsync(
+            `xclip -selection clipboard -t image/png -o > "${tempFilePath}"`,
+          );
+        } catch (err2) {
+          // Try pngpaste (MacOS)
+          try {
+            await execAsync(`pngpaste "${tempFilePath}"`);
+          } catch (err3) {
+            return `Error reading from clipboard: Could not find wl-paste, xclip, or pngpaste, or failed to get image.`;
+          }
+        }
+      }
+      imagePath = tempFilePath;
+    }
+
     const imageBuffer = await fs.readFile(imagePath);
     const base64Image = imageBuffer.toString("base64");
     const ext = path.extname(imagePath).toLowerCase();
@@ -234,6 +259,10 @@ async function describe_image({ path: imagePath }) {
       body: JSON.stringify(payload),
     });
 
+    if (tempFilePath) {
+      await fs.unlink(tempFilePath).catch(() => {});
+    }
+
     if (!response.ok) {
       const text = await response.text();
       return `Error from Gemini API: ${response.status} - ${text}`;
@@ -246,6 +275,9 @@ async function describe_image({ path: imagePath }) {
 
     return text;
   } catch (error) {
+    if (tempFilePath) {
+      await fs.unlink(tempFilePath).catch(() => {});
+    }
     return `Error describing image: ${error.message}`;
   }
 }
@@ -380,13 +412,13 @@ export const tools = [
     function: {
       name: "describe_image",
       description:
-        "Describe an image file on disk using Gemini 3 Pro Preview. Returns a detailed text description.",
+        "Describe an image file on disk using Gemini 3 Pro Preview. Returns a detailed text description. Can also read from clipboard by passing 'clipboard' as path.",
       parameters: {
         type: "object",
         properties: {
           path: {
             type: "string",
-            description: "The path to the image file.",
+            description: "The path to the image file, or 'clipboard' to read from system clipboard.",
           },
         },
         required: ["path"],
