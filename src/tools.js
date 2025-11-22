@@ -3,11 +3,11 @@
  * @module tools
  */
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import fs from 'fs/promises';
-import path from 'path';
-import { config } from './config.js';
+import { exec } from "child_process";
+import { promisify } from "util";
+import fs from "fs/promises";
+import path from "path";
+import { config } from "./config.js";
 
 const execAsync = promisify(exec);
 
@@ -17,7 +17,10 @@ const execAsync = promisify(exec);
 function limitOutput(output, isError = false) {
   const charLimit = config.toolOutputLimit * 4;
   if (output.length > charLimit) {
-    return output.substring(0, charLimit) + `\n... (Output truncated. Total length: ${output.length} chars.)`;
+    return (
+      output.substring(0, charLimit) +
+      `\n... (Output truncated. Total length: ${output.length} chars.)`
+    );
   }
   return output;
 }
@@ -28,15 +31,23 @@ function limitOutput(output, isError = false) {
 async function bash({ command }) {
   try {
     // Added timeout of 30 seconds
-    const { stdout, stderr } = await execAsync(command, { maxBuffer: 10 * 1024 * 1024, timeout: 30000 });
-    let output = stdout + (stderr ? `\nSTDERR:\n${stderr}` : '');
-    
+    const { stdout, stderr } = await execAsync(command, {
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 30000,
+    });
+    let output = stdout + (stderr ? `\nSTDERR:\n${stderr}` : "");
+
     if (!output.trim()) {
       return "(Command executed successfully with no output)";
     }
     return limitOutput(output);
   } catch (error) {
-    return limitOutput(`Error executing command:\n${error.message}\nSTDERR:\n${error.stderr || ''}`, true);
+    return limitOutput(
+      `Error executing command:\n${error.message}\nSTDERR:\n${
+        error.stderr || ""
+      }`,
+      true
+    );
   }
 }
 
@@ -44,18 +55,18 @@ async function bash({ command }) {
  * Search for files by name pattern, respecting .gitignore.
  */
 async function search_files({ pattern }) {
-    if (!pattern) return "Error: 'pattern' is required.";
-    return await bash({ command: `fd "${pattern}"` });
+  if (!pattern) return "Error: 'pattern' is required.";
+  return await bash({ command: `fd "${pattern}"` });
 }
 
 /**
  * Search for a string in files, respecting .gitignore.
  */
 async function search_string({ query }) {
-    if (!query) return "Error: 'query' is required.";
-    // Explicitly search the current directory to ensure it doesn't wait for stdin
-    // -- is used to stop argument parsing, ensuring 'query' isn't interpreted as a flag
-    return await bash({ command: `rg -n -- "${query}" .` });
+  if (!query) return "Error: 'query' is required.";
+  // Explicitly search the current directory to ensure it doesn't wait for stdin
+  // -- is used to stop argument parsing, ensuring 'query' isn't interpreted as a flag
+  return await bash({ command: `rg -n -- "${query}" .` });
 }
 
 /**
@@ -65,9 +76,9 @@ async function search_string({ query }) {
 async function read_file({ path: filePath, start_line, end_line }) {
   if (!filePath) return "Error: 'path' is required.";
   try {
-    const content = await fs.readFile(filePath, 'utf8');
-    const lines = content.split('\n');
-    
+    const content = await fs.readFile(filePath, "utf8");
+    const lines = content.split("\n");
+
     let start = 0;
     let end = lines.length;
 
@@ -83,9 +94,9 @@ async function read_file({ path: filePath, start_line, end_line }) {
 
     // Enforce 500 line limit
     const MAX_LINES = 500;
-    
+
     if (end - start > MAX_LINES) {
-       end = start + MAX_LINES;
+      end = start + MAX_LINES;
     }
 
     if (start >= lines.length) return "";
@@ -93,9 +104,10 @@ async function read_file({ path: filePath, start_line, end_line }) {
     if (start < 0) start = 0;
 
     const selectedLines = lines.slice(start, end);
-    
-    return limitOutput(`(Total lines: ${lines.length})\n` + selectedLines.join('\n'));
 
+    return limitOutput(
+      `(Total lines: ${lines.length})\n` + selectedLines.join("\n")
+    );
   } catch (error) {
     return `Error reading file: ${error.message}`;
   }
@@ -106,31 +118,31 @@ async function read_file({ path: filePath, start_line, end_line }) {
  * Supports full overwrite or partial search-and-replace.
  */
 async function update_file({ path: filePath, content, old_content }) {
-  if (!filePath || content === undefined) return "Error: 'path' and 'content' are required.";
-  
+  if (!filePath || content === undefined)
+    return "Error: 'path' and 'content' are required.";
+
   try {
     if (old_content) {
       // Partial update mode
       let currentFileContent;
       try {
-        currentFileContent = await fs.readFile(filePath, 'utf8');
+        currentFileContent = await fs.readFile(filePath, "utf8");
       } catch (err) {
         return `Error reading file for partial update: ${err.message}. (File must exist for partial updates)`;
       }
 
       if (!currentFileContent.includes(old_content)) {
-         return "Error: 'old_content' text block not found in file. Please ensure exact match (including whitespace/indentation).";
+        return "Error: 'old_content' text block not found in file. Please ensure exact match (including whitespace/indentation).";
       }
 
       const newFileContent = currentFileContent.replace(old_content, content);
-      
-      await fs.writeFile(filePath, newFileContent, 'utf8');
+
+      await fs.writeFile(filePath, newFileContent, "utf8");
       return `Successfully updated ${filePath} (partial replace).`;
-      
     } else {
       // Full overwrite mode
       await fs.mkdir(path.dirname(filePath), { recursive: true });
-      await fs.writeFile(filePath, content, 'utf8');
+      await fs.writeFile(filePath, content, "utf8");
       return `Successfully updated ${filePath} (full overwrite).`;
     }
   } catch (error) {
@@ -139,21 +151,86 @@ async function update_file({ path: filePath, content, old_content }) {
 }
 
 /**
- * Search the web using a python script.
+ * Search the web using Gemini's Grounding feature.
+ * This is a special tool that triggers a secondary LLM call with grounding enabled.
  */
-async function search_web({ query }) {
+async function google_search({ query }) {
   if (!query) return "Error: 'query' is required.";
-  // Escape single quotes to be safe inside single quotes in bash
-  const safeQuery = query.replace(/'/g, "'\\''");
-  return await bash({ command: `python src/web_search.py '${safeQuery}'` });
+
+  try {
+    // We need to dynamically import callGemini to avoid circular dependencies if it were in a shared module,
+    // but here we are in tools.js.
+    // However, callGemini is in providers/gemini.js which depends on config.js.
+    // tools.js also depends on config.js.
+    // We need to avoid tools.js -> gemini.js -> tools.js loop.
+    //
+    // Ideally, we'd move callGemini to a separate module or pass the LLM caller to the tools.
+    // For now, we'll do a dynamic import inside the function to break the cycle at load time.
+
+    const { callGemini } = await import("./providers/gemini.js");
+
+    // We create a temporary message history for this search query
+    const searchMessages = [{ role: "user", content: query }];
+
+    // We call Gemini WITHOUT passing any tools, but explicitly enabling Google Search Grounding
+    // (which we need to support in callGemini via a flag or special logic).
+    // Since callGemini derives tools from the passed 'tools' array, we can pass a special "grounding-only" signal
+    // or we can modify callGemini to accept an options object.
+
+    // But wait, callGemini's signature is (messages, tools).
+    // If we pass an empty tools array [], mapToolsToGemini will return empty or default.
+    // We need to signal to mapToolsToGemini to enable googleSearch.
+
+    // Let's pass a special "dummy" tool that triggers the grounding logic in mapToolsToGemini if we modify it,
+    // OR simpler: we modify callGemini to accept an optional 'forceGrounding' param,
+    // but we can't change the signature easily without affecting other callers.
+
+    // Alternative: We just use a dedicated internal helper or modify callGemini to look for a specific flag in the tools list.
+
+    // Let's use a special tool object that mapToolsToGemini recognizes.
+    const groundingTool = {
+      function: {
+        name: "__google_search_trigger__", // Internal signal
+        description: "Internal trigger",
+        parameters: {},
+      },
+    };
+
+    const { message } = await callGemini(searchMessages, [groundingTool]);
+
+    let result = message.content;
+
+    // Append grounding metadata if available
+    if (
+      message.provider_metadata &&
+      message.provider_metadata.grounding_metadata
+    ) {
+      const metadata = message.provider_metadata.grounding_metadata;
+      if (
+        metadata.searchEntryPoint &&
+        metadata.searchEntryPoint.renderedContent
+      ) {
+        result += `\n\n[Grounding]: ${metadata.searchEntryPoint.renderedContent}`;
+      } else if (metadata.groundingChunks) {
+        // Basic reconstruction of citations if needed, but usually the content already has them integrated
+        // or we just let the model's answer stand.
+        result += `\n\n(Verified with Google Search)`;
+      }
+    }
+
+    return result;
+  } catch (error) {
+    return `Error performing Google Search: ${error.message}`;
+  }
 }
 
 export const tools = [
   {
     type: "function",
     function: {
-      name: "search_web",
-      description: "Perform a web search using DuckDuckGo.",
+      name: "google_search",
+      description:
+        "Perform a web search using Google Search Grounding. Use this to get up-to-date information from the internet.",
       parameters: {
         type: "object",
         properties: {
@@ -167,11 +244,15 @@ export const tools = [
     type: "function",
     function: {
       name: "bash",
-      description: "Execute a bash command. Use this for all system operations, file manipulation, and information retrieval.",
+      description:
+        "Execute a bash command. Use this for all system operations, file manipulation, and information retrieval.",
       parameters: {
         type: "object",
         properties: {
-          command: { type: "string", description: "The bash command to execute." },
+          command: {
+            type: "string",
+            description: "The bash command to execute.",
+          },
         },
         required: ["command"],
       },
@@ -185,7 +266,10 @@ export const tools = [
       parameters: {
         type: "object",
         properties: {
-          pattern: { type: "string", description: "The filename pattern to search for." },
+          pattern: {
+            type: "string",
+            description: "The filename pattern to search for.",
+          },
         },
         required: ["pattern"],
       },
@@ -214,8 +298,14 @@ export const tools = [
         type: "object",
         properties: {
           path: { type: "string", description: "The path to the file." },
-          start_line: { type: "integer", description: "Start line number (1-based, inclusive)." },
-          end_line: { type: "integer", description: "End line number (1-based, inclusive)." }
+          start_line: {
+            type: "integer",
+            description: "Start line number (1-based, inclusive).",
+          },
+          end_line: {
+            type: "integer",
+            description: "End line number (1-based, inclusive).",
+          },
         },
         required: ["path"],
       },
@@ -225,22 +315,30 @@ export const tools = [
     type: "function",
     function: {
       name: "update_file",
-      description: "Update a file. You can overwrite the entire file or perform a partial find-and-replace.",
+      description:
+        "Update a file. You can overwrite the entire file or perform a partial find-and-replace.",
       parameters: {
         type: "object",
         properties: {
           path: { type: "string", description: "The path to the file." },
-          content: { type: "string", description: "The new content to write or to substitute." },
-          old_content: { type: "string", description: "Optional. If provided, this specific text block will be replaced by 'content' in the file. If omitted, the entire file is overwritten." }
+          content: {
+            type: "string",
+            description: "The new content to write or to substitute.",
+          },
+          old_content: {
+            type: "string",
+            description:
+              "Optional. If provided, this specific text block will be replaced by 'content' in the file. If omitted, the entire file is overwritten.",
+          },
         },
         required: ["path", "content"],
       },
-    }
+    },
   },
 ];
 
 export const toolImplementations = {
-  search_web,
+  google_search,
   bash,
   search_files,
   search_string,

@@ -35,16 +35,66 @@ function fixSchemaTypes(schema) {
  * @returns {Array} Gemini format tools.
  */
 function mapToolsToGemini(tools) {
-  if (!tools || tools.length === 0) return undefined;
-  return [
-    {
+  const geminiTools = [];
+
+  // Check for our special internal trigger for grounding
+  const forceGrounding =
+    tools &&
+    tools.some(
+      (t) => t.function && t.function.name === "__google_search_trigger__"
+    );
+
+  if (forceGrounding) {
+    // If specifically requested via the special trigger, we ONLY enable Google Search
+    // and ignore other function declarations to avoid the "unsupported combination" error.
+    geminiTools.push({ googleSearch: {} });
+    return geminiTools;
+  }
+
+  if (tools && tools.length > 0) {
+    geminiTools.push({
       function_declarations: tools.map((t) => ({
         name: t.function.name,
         description: t.function.description,
         parameters: fixSchemaTypes(t.function.parameters),
       })),
-    },
-  ];
+    });
+  }
+
+  // NOTE: Google Search Grounding and Function Calling cannot be used in the same request
+  // for the current Gemini models (as of late 2024/early 2025).
+  // We must choose one or the other.
+  // Since the user explicitly requested to "enable Grounding with Google Search" and
+  // the agent heavily relies on tools (function calling), we are in a bind.
+  //
+  // However, if we simply remove the function declarations when we want to search,
+  // the agent loses its other capabilities.
+  //
+  // Current workaround:
+  // If tools are provided, we prioritize tools (function calling).
+  // If we want to use Google Search, we would technically need to disable tools.
+  //
+  // But the user wants to replace the `web_search` tool with native grounding.
+  // This implies the model should decide when to search.
+  //
+  // Since we can't have both enabled simultaneously in the same request payload:
+  // We will ONLY enable function calling if tools are present.
+  // We will ONLY enable Google Search if NO tools are present (which is rare for this agent).
+  //
+  // WAITING FOR GOOGLE TO FIX THIS LIMITATION OR USING LIVE API IS THE LONG TERM FIX.
+  //
+  // FOR NOW: We will disable Google Search Grounding to restore agent functionality
+  // regarding function calls, as breaking the agent is worse.
+  // We will add a specific "google_search" tool that the agent can CALL, which then
+  // triggers a second request to Gemini with ONLY googleSearch enabled and NO tools.
+  // This is the "Sub-agent" or "Two-step" pattern.
+
+  // Reverting to just tools for now to fix the crash.
+  // We will implement the "native search tool" pattern in the next step.
+
+  // geminiTools.push({ googleSearch: {} });
+
+  return geminiTools;
 }
 
 /**
@@ -297,6 +347,7 @@ export async function callGemini(messages, tools) {
     content: content || null,
     provider_metadata: {
       gemini_parts: contentParts, // Preserve original parts including thoughts/signatures
+      grounding_metadata: candidate.groundingMetadata, // Capture grounding metadata
     },
   };
   if (toolCalls.length > 0) {
