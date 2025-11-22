@@ -120,7 +120,7 @@ node src/index.js
 **Run in autonomous mode with a specific model (via OpenRouter):**
 
 ```bash
-node src/index.js --mode auto --provider openrouter --model "anthropic/claude-4.5-sonnet"
+node src/index.js --mode auto --provider openrouter --model x-ai/grok-4.1-fast:free
 ```
 
 **Run using OpenRouter provider:**
