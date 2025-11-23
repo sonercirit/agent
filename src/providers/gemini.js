@@ -113,9 +113,20 @@ function formatGeminiParts(content) {
       .map((part) => {
         if (typeof part === "string") return { text: part };
         if (part.type === "text") return { text: part.text };
-        // For now, we skip image_url as we haven't implemented it fully
-        // and passing it as text might be confusing.
-        // If strictly text needed, we could ignore non-text parts.
+        if (part.type === "image_url" && part.image_url && part.image_url.url) {
+          const url = part.image_url.url;
+          if (url.startsWith("data:")) {
+            const match = url.match(/^data:([^;]+);base64,(.+)$/);
+            if (match) {
+              return {
+                inline_data: {
+                  mime_type: match[1],
+                  data: match[2],
+                },
+              };
+            }
+          }
+        }
         return null;
       })
       .filter(Boolean);
@@ -262,9 +273,10 @@ function calculateGeminiCost(model, usage) {
  * Calls the Gemini API.
  * @param {Array} messages - The conversation history.
  * @param {Array} tools - The available tools.
+ * @param {string} [model] - Optional model override.
  * @returns {Promise<Object>} The response message.
  */
-export async function callGemini(messages, tools) {
+export async function callGemini(messages, tools, model = null) {
   if (!config.geminiApiKey) {
     throw new Error("GEMINI_API_KEY is not set.");
   }
@@ -273,9 +285,13 @@ export async function callGemini(messages, tools) {
   const geminiTools = mapToolsToGemini(tools);
 
   // Construct URL
-  const modelName = config.model.includes("gemini")
-    ? config.model
-    : "gemini-1.5-flash";
+  const modelName = model || config.model;
+
+  if (!modelName.toLowerCase().includes("gemini")) {
+    throw new Error(
+      `Invalid model for Gemini provider: ${modelName}. The model name must contain 'gemini'.`,
+    );
+  }
   // Strip 'google/' if present for the API call if usage assumes openrouter naming
   const cleanModelName = modelName.replace("google/", "");
 

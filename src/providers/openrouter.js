@@ -4,9 +4,10 @@ import { config } from "../config.js";
  * Calls the OpenRouter API with the given messages and tools.
  * @param {Array} messages - The conversation history.
  * @param {Array} tools - The available tools.
+ * @param {string} [model] - Optional model override.
  * @returns {Promise<Object>} The response message.
  */
-export async function callOpenRouter(messages, tools) {
+export async function callOpenRouter(messages, tools, model = null) {
   const headers = {
     Authorization: `Bearer ${config.apiKey}`,
     "Content-Type": "application/json",
@@ -15,7 +16,7 @@ export async function callOpenRouter(messages, tools) {
   };
 
   const body = {
-    model: config.model,
+    model: model || config.model,
     messages: messages,
     tools: tools,
     usage: { include: true },
@@ -24,6 +25,33 @@ export async function callOpenRouter(messages, tools) {
       allow_fallbacks: false,
     },
   };
+
+  // Check for our special internal trigger for grounding
+  const forceGrounding =
+    tools &&
+    tools.some(
+      (t) => t.function && t.function.name === "__google_search_trigger__",
+    );
+
+  if (forceGrounding) {
+    // Enable OpenRouter web search by appending :online to the model name
+    // This is the documented way to enable web search for any model
+    if (!body.model.endsWith(":online")) {
+      body.model += ":online";
+    }
+
+    // Remove the dummy tool so the model doesn't try to call it
+    // and instead uses the injected search results to generate content.
+    if (body.tools) {
+      body.tools = body.tools.filter(
+        (t) => t.function.name !== "__google_search_trigger__",
+      );
+      // If no tools left, remove the tools property
+      if (body.tools.length === 0) {
+        delete body.tools;
+      }
+    }
+  }
 
   const MAX_RETRIES = 3;
   let attempt = 0;

@@ -8,7 +8,7 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import { limitOutput } from "./utils.js";
-import { callGemini } from "./providers/gemini.js";
+import { callLLM } from "./llm.js";
 import { config } from "./config.js";
 
 const execAsync = promisify(exec);
@@ -143,32 +143,15 @@ async function update_file({ path: filePath, content, old_content }) {
  * Use this to get up-to-date information from the internet.
  */
 async function google_search({ query }) {
-  // This is a placeholder. The actual implementation is handled by the
-  // "googleSearch" tool declaration in the Gemini API request itself.
-  // However, since we are using the "Sub-agent" pattern where the agent calls this tool,
-  // and then we trigger a NEW Gemini request with grounding enabled,
-  // we need to implement that logic here or in the agent loop.
-
-  // Actually, looking at the agent loop, it just calls the tool implementation.
-  // So we need to perform the "grounded request" here.
-
   if (!query) return "Error: 'query' is required.";
 
   try {
-    // We create a temporary message history for the search
-    const searchMessages = [{ role: "user", content: query }];
+    const searchMessages = [
+      { role: "user", content: `Perform a google search for: ${query}` },
+    ];
+    let tools = [];
 
-    // We call Gemini with the special "googleSearch" tool enabled
-    // We need to bypass the standard tool map and force the googleSearch tool.
-    // Since we can't easily change the `callGemini` signature, we might need to
-    // rely on the `mapToolsToGemini` logic which checks for a special trigger.
-    // But `mapToolsToGemini` checks the *input* tools.
-
-    // Let's look at `mapToolsToGemini` in `src/providers/gemini.js` again.
-    // It checks: `tools.some(t => t.function && t.function.name === "__google_search_trigger__")`
-
-    // So if we pass this special tool, it will enable grounding.
-    const specialTool = [
+    tools = [
       {
         type: "function",
         function: {
@@ -179,8 +162,11 @@ async function google_search({ query }) {
       },
     ];
 
-    const { message } = await callGemini(searchMessages, specialTool);
-
+    const { message } = await callLLM(
+      searchMessages,
+      tools,
+      "google/gemini-3-pro-preview",
+    );
     return message.content || "No results found.";
   } catch (error) {
     return `Error performing Google Search: ${error.message}`;
@@ -229,13 +215,14 @@ async function describe_image({ path: singlePath, paths }) {
 
   const imagePaths = paths || [singlePath];
   const tempFiles = [];
-  const parts = [
-    {
-      text: "Describe these images in detail. Identify objects, colors, text, and the overall scene.",
-    },
-  ];
-
   try {
+    const content = [
+      {
+        type: "text",
+        text: "Describe these images in detail. Identify objects, colors, text, and the overall scene.",
+      },
+    ];
+
     for (let i = 0; i < imagePaths.length; i++) {
       let imagePath = imagePaths[i];
 
@@ -258,45 +245,22 @@ async function describe_image({ path: singlePath, paths }) {
       if (ext === ".heic") mimeType = "image/heic";
       if (ext === ".heif") mimeType = "image/heif";
 
-      parts.push({
-        inline_data: {
-          mime_type: mimeType,
-          data: base64Image,
+      content.push({
+        type: "image_url",
+        image_url: {
+          url: `data:${mimeType};base64,${base64Image}`,
         },
       });
     }
 
-    const apiKey = config.geminiApiKey;
-    if (!apiKey) return "Error: GEMINI_API_KEY is not set.";
+    const messages = [{ role: "user", content: content }];
+    const { message } = await callLLM(
+      messages,
+      [],
+      "google/gemini-3-pro-preview",
+    );
 
-    const model = "gemini-3-pro-preview";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-    const payload = {
-      contents: [
-        {
-          parts: parts,
-        },
-      ],
-    };
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      return `Error from Gemini API: ${response.status} - ${text}`;
-    }
-
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!text) return "Error: No description returned from API.";
-
-    return text;
+    return message.content || "Error: No description returned.";
   } catch (error) {
     return `Error describing image: ${error.message}`;
   } finally {
@@ -364,8 +328,7 @@ export const tools = [
     type: "function",
     function: {
       name: "read_file",
-      description:
-        "Read the content of a file. Returns up to 100 lines.",
+      description: "Read the content of a file. Returns up to 500 lines.",
       parameters: {
         type: "object",
         properties: {
