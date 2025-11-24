@@ -3,6 +3,7 @@ import json
 import time
 import asyncio
 import logging
+import html
 from prompt_toolkit import print_formatted_text
 from prompt_toolkit.formatted_text import HTML
 from ..config import config
@@ -78,7 +79,7 @@ async def call_openrouter(messages, tools, model=None):
             if "usage" in data:
                 print_formatted_text(
                     HTML(
-                        f"<style fg='#666666'>Token Usage: {json.dumps(data['usage'], indent=2)}</style>"
+                        f"<style fg='#666666'>Token Usage: {html.escape(json.dumps(data['usage'], indent=2))}</style>"
                     )
                 )
 

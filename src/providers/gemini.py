@@ -4,6 +4,7 @@ import time
 import asyncio
 import random
 import logging
+import html
 from prompt_toolkit import print_formatted_text
 from prompt_toolkit.formatted_text import HTML
 from ..config import config
@@ -296,7 +297,7 @@ async def call_gemini(messages, tools, model=None):
             if "usageMetadata" in data:
                 print_formatted_text(
                     HTML(
-                        f"<style fg='#666666'>Token Usage: {json.dumps(data['usageMetadata'], indent=2)}</style>"
+                        f"<style fg='#666666'>Token Usage: {html.escape(json.dumps(data['usageMetadata'], indent=2))}</style>"
                     )
                 )
                 data["usageMetadata"]["cost"] = calculate_gemini_cost(

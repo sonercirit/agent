@@ -283,14 +283,16 @@ async def handle_tool_calls(tool_calls):
 
         logger.debug(f"Tool Result: {str(result)}")
         print_formatted_text(
-            HTML("<style fg='#888888'>Result: {}...</style>").format(str(result)[:100])
+            HTML("<style fg='#888888'>Result: {}...</style>").format(
+                html.escape(str(result)[:100])
+            )
         )
 
 
 async def main():
     print_formatted_text(
         HTML("<ansicyan>Agent started in {} mode using model {}</ansicyan>").format(
-            config.mode, config.model
+            html.escape(str(config.mode)), html.escape(str(config.model))
         )
     )
     print_formatted_text(HTML("<style fg='#888888'>Shortcuts:</style>"))
