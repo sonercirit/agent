@@ -232,6 +232,15 @@ async def call_gemini(messages, tools, model=None):
         },
     }
 
+    # Enable thinking for supported models
+    # Logic ported from JS version: enable for "thinking" or "pro" models
+    if "thinking" in model_id.lower() or "pro" in model_id.lower():
+        body["generationConfig"]["thinkingConfig"] = {
+            "includeThoughts": True
+        }
+        # Ensure enough tokens for thoughts
+        body["generationConfig"]["maxOutputTokens"] = 64000
+
     if system_instruction:
         body["systemInstruction"] = system_instruction
 
@@ -247,6 +256,22 @@ async def call_gemini(messages, tools, model=None):
                 json=body,
                 timeout=120,
             )
+
+            # Handle thinkingConfig not supported error (400)
+            if response.status_code == 400 and "thinkingConfig" in response.text:
+                logger.warning("Model does not support thinkingConfig. Retrying without it.")
+                if "thinkingConfig" in body["generationConfig"]:
+                    del body["generationConfig"]["thinkingConfig"]
+                    # Keep maxOutputTokens as it might be useful/supported
+                
+                # Retry immediately
+                response = await asyncio.to_thread(
+                    requests.post,
+                    url,
+                    headers={"Content-Type": "application/json"},
+                    json=body,
+                    timeout=120,
+                )
 
             if response.status_code != 200:
                 error_text = response.text
@@ -281,15 +306,36 @@ async def call_gemini(messages, tools, model=None):
                 raise Exception("No candidates returned")
 
             candidate = data["candidates"][0]
+            # Debug: Print candidate keys
+            print_formatted_text(HTML(f"<style fg='#444444'>DEBUG: Candidate keys: {list(candidate.keys())}</style>"))
+            
             content = candidate.get("content", {})
             parts = content.get("parts", [])
 
+            # Debug: Print raw parts to see structure
+            print_formatted_text(HTML(f"<style fg='#444444'>DEBUG: Parts keys: {[list(p.keys()) for p in parts]}</style>"))
+            if parts:
+                 print_formatted_text(HTML(f"<style fg='#444444'>DEBUG: First part: {json.dumps(parts[0], indent=2)}</style>"))
+
             message_content = ""
+            reasoning_content = ""
             tool_calls = []
 
             for part in parts:
-                if "text" in part:
+                # Handle reasoning/thought
+                # Check for 'thought' key. It could be a boolean flag (with text in 'text')
+                # or it could be the thought content itself (string).
+                thought_val = part.get("thought")
+                if thought_val:
+                    if isinstance(thought_val, str):
+                        reasoning_content += thought_val + "\n"
+                    else:
+                        reasoning_content += part.get("text", "") + "\n"
+                
+                # Handle normal text
+                elif "text" in part:
                     message_content += part["text"]
+                
                 if "functionCall" in part:
                     fc = part["functionCall"]
                     tool_call = {
@@ -311,6 +357,7 @@ async def call_gemini(messages, tools, model=None):
                 "message": {
                     "role": "assistant",
                     "content": message_content,
+                    "reasoning": reasoning_content.strip() if reasoning_content else None,
                     "tool_calls": tool_calls if tool_calls else None,
                 },
                 "usage": data.get("usageMetadata"),
