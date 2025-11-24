@@ -321,7 +321,7 @@ export async function callGemini(messages, tools, model = null) {
 
   let response;
   let attempt = 0;
-  const maxRetries = 3;
+  const maxRetries = 5;
   const baseDelay = 2000;
 
   while (attempt < maxRetries) {
