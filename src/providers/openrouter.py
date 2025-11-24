@@ -1,6 +1,7 @@
 import requests
 import json
 import time
+import asyncio
 from ..config import config
 
 async def call_openrouter(messages, tools, model=None):
@@ -41,7 +42,8 @@ async def call_openrouter(messages, tools, model=None):
     
     while attempt < MAX_RETRIES:
         try:
-            response = requests.post(
+            response = await asyncio.to_thread(
+                requests.post,
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers=headers,
                 json=body,
@@ -53,7 +55,7 @@ async def call_openrouter(messages, tools, model=None):
                 if response.status_code >= 500 or response.status_code == 429:
                     print(f"Attempt {attempt + 1} failed: {response.status_code}. Retrying...")
                     attempt += 1
-                    time.sleep(1 * (2 ** attempt))
+                    await asyncio.sleep(1 * (2 ** attempt))
                     continue
                 raise Exception(f"OpenRouter API error: {response.status_code} - {error_text}")
                 
@@ -73,7 +75,7 @@ async def call_openrouter(messages, tools, model=None):
         except requests.exceptions.RequestException as e:
             print(f"Attempt {attempt + 1} failed: Network error. Retrying...")
             attempt += 1
-            time.sleep(1 * (2 ** attempt))
+            await asyncio.sleep(1 * (2 ** attempt))
             continue
             
     raise Exception("Failed to call OpenRouter API after retries.")

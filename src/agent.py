@@ -8,6 +8,11 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.styles import Style
 from prompt_toolkit.lexers import PygmentsLexer
 from pygments.lexers.markup import MarkdownLexer
+from prompt_toolkit.application import Application
+from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.layout import Layout
+from prompt_toolkit.patch_stdout import patch_stdout
 
 from .config import config
 from .llm import call_llm
@@ -40,17 +45,18 @@ The user has set a strict output limit of 1k tokens per tool call. If you see tr
 messages = [{"role": "system", "content": system_prompt}]
 last_request_time = 0
 
-async def process_turn(user_input):
+async def _process_turn_logic(user_input, stop_check_callback=None):
     global last_request_time
     
     messages.append({"role": "user", "content": user_input})
     
     turn_finished = False
-    interrupted = False
     
-    while not turn_finished and not interrupted:
-        print(f"{Colors.DIM}Thinking... (Ctrl+C to interrupt){Colors.RESET}")
-        
+    while not turn_finished:
+        if stop_check_callback and stop_check_callback():
+            print(f"\n{Colors.YELLOW}Stopping after current step as requested.{Colors.RESET}")
+            break
+
         try:
             manage_cache(messages)
             
@@ -74,19 +80,79 @@ async def process_turn(user_input):
                 print(f"{Colors.GRAY}========================{Colors.RESET}\n")
                 
             if response_message.get("tool_calls"):
+                if stop_check_callback and stop_check_callback():
+                    print(f"\n{Colors.YELLOW}Stopping before executing tools as requested.{Colors.RESET}")
+                    break
                 await handle_tool_calls(response_message["tool_calls"])
             else:
                 print(f"\n{Colors.GREEN}Assistant:{Colors.RESET}")
                 print(f"{response_message['content']}\n")
                 turn_finished = True
                 
-        except KeyboardInterrupt:
-            print(f"\n{Colors.RED}User requested interrupt.{Colors.RESET}")
-            interrupted = True
-            break
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             print(f"\n{Colors.RED}Error: {str(e)}{Colors.RESET}")
             turn_finished = True
+
+async def process_turn(user_input):
+    kb = KeyBindings()
+    processing_task = None
+    stop_requested = False
+
+    @kb.add('c-w')
+    def _(event):
+        nonlocal stop_requested
+        stop_requested = True
+        # We don't exit here, we let the logic loop notice the flag or finish naturally
+        # But we need to notify the user
+        pass
+
+    @kb.add('c-c')
+    def _(event):
+        if processing_task:
+            processing_task.cancel()
+        # Do NOT call event.app.exit() here. 
+        # The cancellation will trigger the finally block in run_logic which calls app.exit()
+    
+    def get_status_text():
+        if stop_requested:
+            return HTML(" <style class='ansiyellow'>Stopping after current step...</style> (Ctrl+C to force quit)")
+        return HTML(" <style class='ansigreen'>Thinking...</style> (Ctrl+W to stop gracefully, Ctrl+C to force quit)")
+
+    status_window = Window(content=FormattedTextControl(get_status_text), height=1, style="class:status")
+    
+    app = Application(
+        layout=Layout(status_window),
+        key_bindings=kb,
+        full_screen=False
+    )
+    
+    async def run_logic():
+        nonlocal processing_task
+        try:
+             # We need to pass the stop_check to _process_turn_logic
+             # But _process_turn_logic is outside. 
+             # We can wrap it or modify it.
+             # Let's modify _process_turn_logic to check a global or callback?
+             # Or better, we define the logic inside here or pass a context.
+             
+             # Since _process_turn_logic is global, let's pass a lambda to check stop
+             await _process_turn_logic(user_input, lambda: stop_requested)
+        except asyncio.CancelledError:
+            print(f"\n{Colors.RED}User requested interrupt.{Colors.RESET}")
+        finally:
+            app.exit()
+
+    with patch_stdout():
+        processing_task = asyncio.create_task(run_logic())
+        await app.run_async()
+        if not processing_task.done():
+            processing_task.cancel()
+            try:
+                await processing_task
+            except asyncio.CancelledError:
+                pass
 
 async def handle_tool_calls(tool_calls):
     print(f"\n{Colors.YELLOW}Tool Calls:{Colors.RESET}")
@@ -116,8 +182,6 @@ async def handle_tool_calls(tool_calls):
             result = f"Error: Tool '{func_name}' not found."
             
         # Add tool result to messages
-        # Gemini expects specific format, OpenRouter (OpenAI) expects another
-        # We'll use the standard OpenAI format and let the provider adapters handle it
         messages.append({
             "role": "tool",
             "tool_call_id": tool_call.get("id", "call_unknown"),
@@ -129,19 +193,24 @@ async def handle_tool_calls(tool_calls):
 
 async def main():
     print(f"{Colors.CYAN}Agent started in {config.mode} mode using model {config.model}{Colors.RESET}")
-    print(f"{Colors.DIM}Type 'exit' to quit. Ctrl+S to submit. Ctrl+E for external editor.{Colors.RESET}")
+    print(f"{Colors.DIM}Shortcuts:{Colors.RESET}")
+    print(f"{Colors.DIM}  Alt+Enter : Submit{Colors.RESET}")
+    print(f"{Colors.DIM}  Alt+E     : Open External Editor{Colors.RESET}")
+    print(f"{Colors.DIM}  Alt+I     : Paste Image from Clipboard{Colors.RESET}")
+    print(f"{Colors.DIM}  Ctrl+C    : Stop/Cancel{Colors.RESET}")
+    print(f"{Colors.DIM}  Type 'exit' to quit.{Colors.RESET}")
     
     kb = KeyBindings()
 
-    @kb.add('c-s')
+    @kb.add('escape', 'enter')
     def _(event):
         event.current_buffer.validate_and_handle()
 
-    @kb.add('c-e')
+    @kb.add('escape', 'e')
     def _(event):
         event.current_buffer.open_in_editor()
         
-    @kb.add('c-v')
+    @kb.add('escape', 'i')
     async def _(event):
         path = await save_clipboard_image()
         if path:
@@ -160,7 +229,7 @@ async def main():
     while True:
         try:
             user_input = await session.prompt_async(
-                HTML("<b>User (Ctrl+S to send):</b>\n"),
+                HTML("<b>User (Alt+Enter to send):</b>\n"),
             )
             
             if user_input.strip().lower() == "exit":

@@ -1,6 +1,8 @@
 import requests
 import json
 import time
+import asyncio
+import random
 from ..config import config
 
 def fix_schema_types(schema):
@@ -121,15 +123,6 @@ async def call_gemini(messages, tools, model=None):
             })
         elif msg["role"] == "tool":
             # Gemini expects tool responses in a specific way
-            # We need to find the last function call to match? 
-            # Actually Gemini just needs the function response part.
-            # But we need to be careful about the order.
-            # The current agent structure pushes tool outputs as separate messages.
-            # We need to group them if possible or just send them as 'function_response' parts.
-            
-            # For simplicity, we assume the previous message was a model message with function calls.
-            # We need to map the tool_call_id if possible, but Gemini uses function name.
-            
             gemini_messages.append({
                 "role": "function",
                 "parts": [{
@@ -157,7 +150,8 @@ async def call_gemini(messages, tools, model=None):
     
     while attempt < MAX_RETRIES:
         try:
-            response = requests.post(
+            response = await asyncio.to_thread(
+                requests.post,
                 url,
                 headers={"Content-Type": "application/json"},
                 json=body,
@@ -169,7 +163,7 @@ async def call_gemini(messages, tools, model=None):
                 if response.status_code >= 500 or response.status_code == 429:
                     print(f"Attempt {attempt + 1} failed: {response.status_code}. Retrying...")
                     attempt += 1
-                    time.sleep(1 * (2 ** attempt))
+                    await asyncio.sleep(1 * (2 ** attempt))
                     continue
                 raise Exception(f"Gemini API error: {response.status_code} - {error_text}")
                 
@@ -196,7 +190,6 @@ async def call_gemini(messages, tools, model=None):
                     message_content += part["text"]
                 if "functionCall" in part:
                     fc = part["functionCall"]
-                    
                     tool_call = {
                         "id": f"call_{int(time.time())}_{random.randint(1000,9999)}", # Gemini doesn't give IDs
                         "type": "function",
@@ -224,9 +217,7 @@ async def call_gemini(messages, tools, model=None):
         except requests.exceptions.RequestException as e:
             print(f"Attempt {attempt + 1} failed: Network error. Retrying...")
             attempt += 1
-            time.sleep(1 * (2 ** attempt))
+            await asyncio.sleep(1 * (2 ** attempt))
             continue
             
     raise Exception("Failed to call Gemini API after retries.")
-
-import random
