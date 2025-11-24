@@ -164,13 +164,37 @@ async def describe_image(paths):
 
 
 async def google_search(query):
-    # This is a trigger for the "grounding" logic in the provider
-    # In the python version, we can just return a special string or handle it in the provider
-    # For now, let's return a placeholder that the agent loop can recognize if needed,
-    # or just let the LLM see the result.
-    # Actually, the JS version had complex logic to enable grounding.
-    # We will implement the "tool" version which triggers a second call.
-    return f"__google_search_trigger__: {query}"
+    from .llm import call_llm
+
+    if not query:
+        return "Error: 'query' is required."
+
+    # Create a sub-agent task
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a helpful assistant. Search the web for the user's query and provide a detailed answer.",
+        },
+        {"role": "user", "content": query},
+    ]
+
+    # Dummy tool to trigger grounding in providers
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "__google_search_trigger__",
+                "description": "Trigger search",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+
+    try:
+        response = await call_llm(messages, tools)
+        return response["message"]["content"]
+    except Exception as e:
+        return f"Error performing google search: {str(e)}"
 
 
 tool_implementations = {

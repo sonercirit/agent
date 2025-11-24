@@ -215,12 +215,17 @@ async def call_gemini(messages, tools, model=None):
     # Check if the last message is a tool response from google_search
     # If so, we need to enable grounding for this turn
     force_grounding_turn = False
-    if (
-        messages
-        and messages[-1]["role"] == "tool"
-        and messages[-1]["name"] == "google_search"
-    ):
-        force_grounding_turn = True
+
+    # We removed the check for messages[-1]["name"] == "google_search"
+    # because google_search is now a subagent that returns text.
+    # The main agent should retain access to all tools.
+
+    # Check if the tools list contains the special trigger tool (used by the subagent)
+    if tools:
+        for t in tools:
+            if t["function"]["name"] == "__google_search_trigger__":
+                force_grounding_turn = True
+                break
 
     body = {
         "contents": gemini_messages,
@@ -235,9 +240,7 @@ async def call_gemini(messages, tools, model=None):
     # Enable thinking for supported models
     # Logic ported from JS version: enable for "thinking" or "pro" models
     if "thinking" in model_id.lower() or "pro" in model_id.lower():
-        body["generationConfig"]["thinkingConfig"] = {
-            "includeThoughts": True
-        }
+        body["generationConfig"]["thinkingConfig"] = {"includeThoughts": True}
         # Ensure enough tokens for thoughts
         body["generationConfig"]["maxOutputTokens"] = 64000
 
@@ -259,11 +262,13 @@ async def call_gemini(messages, tools, model=None):
 
             # Handle thinkingConfig not supported error (400)
             if response.status_code == 400 and "thinkingConfig" in response.text:
-                logger.warning("Model does not support thinkingConfig. Retrying without it.")
+                logger.warning(
+                    "Model does not support thinkingConfig. Retrying without it."
+                )
                 if "thinkingConfig" in body["generationConfig"]:
                     del body["generationConfig"]["thinkingConfig"]
                     # Keep maxOutputTokens as it might be useful/supported
-                
+
                 # Retry immediately
                 response = await asyncio.to_thread(
                     requests.post,
@@ -308,14 +313,14 @@ async def call_gemini(messages, tools, model=None):
             candidate = data["candidates"][0]
             # Debug: Print candidate keys
             logger.debug(f"Candidate keys: {list(candidate.keys())}")
-            
+
             content = candidate.get("content", {})
             parts = content.get("parts", [])
 
             # Debug: Print raw parts to see structure
             logger.debug(f"Parts keys: {[list(p.keys()) for p in parts]}")
             if parts:
-                 logger.debug(f"First part: {json.dumps(parts[0], indent=2)}")
+                logger.debug(f"First part: {json.dumps(parts[0], indent=2)}")
 
             message_content = ""
             reasoning_content = ""
@@ -331,11 +336,11 @@ async def call_gemini(messages, tools, model=None):
                         reasoning_content += thought_val + "\n"
                     else:
                         reasoning_content += part.get("text", "") + "\n"
-                
+
                 # Handle normal text
                 elif "text" in part:
                     message_content += part["text"]
-                
+
                 if "functionCall" in part:
                     fc = part["functionCall"]
                     tool_call = {
@@ -357,7 +362,9 @@ async def call_gemini(messages, tools, model=None):
                 "message": {
                     "role": "assistant",
                     "content": message_content,
-                    "reasoning": reasoning_content.strip() if reasoning_content else None,
+                    "reasoning": reasoning_content.strip()
+                    if reasoning_content
+                    else None,
                     "tool_calls": tool_calls if tool_calls else None,
                 },
                 "usage": data.get("usageMetadata"),
