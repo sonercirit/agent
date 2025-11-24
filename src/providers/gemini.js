@@ -345,6 +345,7 @@ export async function callGemini(messages, tools, model = null) {
           `Gemini API 503 (Overloaded). Retrying in ${delay}ms... (Attempt ${attempt}/${maxRetries})`,
         );
         await new Promise((resolve) => setTimeout(resolve, delay));
+        console.warn("Retrying...");
         continue;
       }
 
