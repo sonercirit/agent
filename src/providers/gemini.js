@@ -319,15 +319,55 @@ export async function callGemini(messages, tools, model = null) {
 
   // console.log("Gemini Request Body:", JSON.stringify(body, null, 2));
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let response;
+  let attempt = 0;
+  const maxRetries = 3;
+  const baseDelay = 2000;
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Gemini API Error: ${response.status} - ${text}`);
+  while (attempt < maxRetries) {
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (response.status === 503) {
+        attempt++;
+        const text = await response.text();
+        console.warn(`Gemini API 503 Response: ${text}`);
+
+        if (attempt >= maxRetries) {
+          throw new Error(`Gemini API Error: ${response.status} - ${text}`);
+        }
+        const delay = baseDelay * Math.pow(2, attempt - 1);
+        console.warn(
+          `Gemini API 503 (Overloaded). Retrying in ${delay}ms... (Attempt ${attempt}/${maxRetries})`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Gemini API Error: ${response.status} - ${text}`);
+      }
+
+      break; // Success
+    } catch (error) {
+      // If it's a network error (fetch throws), we might also want to retry?
+      // But the user specifically asked for 503 handling.
+      // If the error is the one we threw above (non-503), rethrow it.
+      if (error.message.startsWith("Gemini API Error")) {
+        throw error;
+      }
+
+      // For other errors (e.g. network timeout), we could retry, but let's stick to the request.
+      // Actually, fetch might throw on network failure. Let's retry on fetch failure too if it's transient?
+      // The user specifically showed a 503 response body.
+      // So the fetch *succeeded* in getting a response, but the status was 503.
+      throw error;
+    }
   }
 
   const data = await response.json();
