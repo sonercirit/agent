@@ -103,12 +103,18 @@ async def call_gemini(messages, tools, model=None):
                 parts.extend(format_gemini_parts(msg["content"]))
             if msg.get("tool_calls"):
                 for tc in msg["tool_calls"]:
-                    parts.append({
-                        "function_call": {
+                    part = {
+                        "functionCall": {
                             "name": tc["function"]["name"],
                             "args": json.loads(tc["function"]["arguments"])
                         }
-                    })
+                    }
+                    # Restore thought_signature if present (required for Thinking models)
+                    # We add it as a sibling to functionCall
+                    if "thought_signature" in tc["function"]:
+                        part["thoughtSignature"] = tc["function"]["thought_signature"]
+                        
+                    parts.append(part)
             gemini_messages.append({
                 "role": "model",
                 "parts": parts
@@ -125,11 +131,7 @@ async def call_gemini(messages, tools, model=None):
             # We need to map the tool_call_id if possible, but Gemini uses function name.
             
             gemini_messages.append({
-                "role": "function", # Gemini uses 'function' role for responses? No, it uses 'user' role with 'function_response' part usually, or 'function' role in v1beta?
-                # v1beta: role: "function" is deprecated or not standard?
-                # Standard is: role: "user", parts: [{function_response: ...}]
-                # Let's check the docs or existing code.
-                # Existing code used: role: "function", parts: [{functionResponse: ...}]
+                "role": "function",
                 "parts": [{
                     "functionResponse": {
                         "name": msg["name"],
@@ -193,14 +195,22 @@ async def call_gemini(messages, tools, model=None):
                 if "text" in part:
                     message_content += part["text"]
                 if "functionCall" in part:
-                    tool_calls.append({
+                    fc = part["functionCall"]
+                    
+                    tool_call = {
                         "id": f"call_{int(time.time())}_{random.randint(1000,9999)}", # Gemini doesn't give IDs
                         "type": "function",
                         "function": {
-                            "name": part["functionCall"]["name"],
-                            "arguments": json.dumps(part["functionCall"]["args"])
+                            "name": fc["name"],
+                            "arguments": json.dumps(fc["args"])
                         }
-                    })
+                    }
+                    # Capture thought_signature if present (required for Thinking models)
+                    # It is usually a sibling of functionCall in the part
+                    if "thoughtSignature" in part:
+                        tool_call["function"]["thought_signature"] = part["thoughtSignature"]
+                    
+                    tool_calls.append(tool_call)
             
             return {
                 "message": {
