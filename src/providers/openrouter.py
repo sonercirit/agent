@@ -3,6 +3,8 @@ import json
 import time
 import asyncio
 import logging
+from prompt_toolkit import print_formatted_text
+from prompt_toolkit.formatted_text import HTML
 from ..config import config
 
 logger = logging.getLogger(__name__)
@@ -74,7 +76,11 @@ async def call_openrouter(messages, tools, model=None):
             data = response.json()
 
             if "usage" in data:
-                logger.debug(f"Token Usage: {json.dumps(data['usage'], indent=2)}")
+                print_formatted_text(
+                    HTML(
+                        f"<style fg='#666666'>Token Usage: {json.dumps(data['usage'], indent=2)}</style>"
+                    )
+                )
 
             choice = data["choices"][0]
             message = choice["message"]

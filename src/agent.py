@@ -71,6 +71,45 @@ The user has set a strict output limit of 1k tokens per tool call. If you see tr
 
 messages = [{"role": "system", "content": system_prompt}]
 last_request_time = 0
+total_cost = 0
+has_seen_cached_tokens = False
+
+
+def handle_usage(usage, elapsed_minutes):
+    global total_cost, has_seen_cached_tokens
+
+    cost = usage.get("cost")
+    if cost:
+        total_cost += cost
+        print_formatted_text(
+            HTML(
+                f"<ansicyan>Cost: ${cost:.6f} | Total Session Cost: ${total_cost:.6f}</ansicyan>"
+            )
+        )
+
+    cached_tokens = (
+        usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+        or usage.get("cachedContentTokenCount", 0)
+        or 0
+    )
+
+    if cached_tokens > 0:
+        has_seen_cached_tokens = True
+
+    if has_seen_cached_tokens and cached_tokens == 0:
+        is_gemini = config.provider == "gemini" or "gemini" in config.model.lower()
+        cache_ttl = 60.0 if is_gemini else 5.0
+        reason = (
+            "Prefix mismatch or Checkpoint limit"
+            if elapsed_minutes < (cache_ttl - 1)
+            else "Cache TTL expired"
+        )
+
+        print_formatted_text(
+            HTML(
+                f"<ansired>WARNING: Cached tokens dropped to 0! (Elapsed: {elapsed_minutes:.1f} minutes). Cause: {reason}.</ansired>"
+            )
+        )
 
 
 async def _process_turn_logic(user_input, stop_check_callback=None):
@@ -94,6 +133,7 @@ async def _process_turn_logic(user_input, stop_check_callback=None):
             manage_cache(messages)
 
             current_time = time.time() * 1000
+            elapsed_minutes = 0
             if last_request_time > 0:
                 elapsed_minutes = (current_time - last_request_time) / 60000
 
@@ -106,6 +146,9 @@ async def _process_turn_logic(user_input, stop_check_callback=None):
 
             logger.debug(f"LLM Response: {json.dumps(response_message, default=str)}")
             logger.debug(f"Usage: {usage}")
+
+            if usage:
+                handle_usage(usage, elapsed_minutes)
 
             messages.append(response_message)
 
