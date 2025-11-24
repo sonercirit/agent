@@ -1,4 +1,0 @@
-prompt_toolkit
-requests
-python-dotenv
-Pygments
