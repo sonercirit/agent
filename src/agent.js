@@ -50,7 +50,7 @@ export async function startAgent() {
 
   while (true) {
     console.log(
-      `\n${colors.bold}${colors.white}User (Ctrl+S to send):${colors.reset}`,
+      `\n${colors.bold}${colors.white}User (Ctrl+S to send, Ctrl+E for editor):${colors.reset}`,
     );
     const content = await readMultilineInput();
 

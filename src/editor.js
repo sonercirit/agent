@@ -1,5 +1,9 @@
 import readline from "readline";
 import { saveClipboardImage } from "./tools.js";
+import { spawn } from "child_process";
+import fs from "fs";
+import os from "os";
+import path from "path";
 
 export function readMultilineInput() {
   return new Promise((resolve) => {
@@ -76,6 +80,46 @@ export function readMultilineInput() {
     const onKey = async (str, key) => {
       if (!key) return;
 
+      if (key.ctrl && key.name === "e") {
+        // Open external editor
+        const tmpDir = os.tmpdir();
+        const tmpFile = path.join(tmpDir, `agent_input_${Date.now()}.txt`);
+        fs.writeFileSync(tmpFile, lines.join("\n"));
+
+        process.stdin.removeListener("keypress", onKey);
+        process.stdin.setRawMode(false);
+        process.stdin.pause();
+
+        const editor = process.env.EDITOR || "vim";
+        const child = spawn(editor, [tmpFile], {
+          stdio: "inherit",
+        });
+
+        child.on("exit", () => {
+          process.stdin.setRawMode(true);
+          process.stdin.resume();
+          process.stdin.on("keypress", onKey);
+
+          if (fs.existsSync(tmpFile)) {
+            const content = fs.readFileSync(tmpFile, "utf8");
+            // Remove trailing newline if added by editor
+            let newContent = content;
+            if (newContent.endsWith("\n") && !lines.join("\n").endsWith("\n")) {
+              newContent = newContent.slice(0, -1);
+            }
+            lines = newContent.split("\n");
+
+            // Reset cursor to end
+            cursor.y = Math.max(0, lines.length - 1);
+            cursor.x = lines[cursor.y].length;
+
+            fs.unlinkSync(tmpFile);
+            render();
+          }
+        });
+        return;
+      }
+
       if (key.ctrl && key.name === "v") {
         const imagePath = await saveClipboardImage();
         if (imagePath) {
@@ -145,47 +189,32 @@ export function readMultilineInput() {
           cursor.x = 0;
         }
       } else {
-        if (!key.ctrl && !key.meta) {
-          const line = lines[cursor.y];
-          const char = str || key.sequence;
-          if (char && char.length === 1 && char.charCodeAt(0) >= 32) {
-            lines[cursor.y] =
-              line.slice(0, cursor.x) + char + line.slice(cursor.x);
-            cursor.x += char.length;
-          }
-        }
+        // Regular character
+        const line = lines[cursor.y];
+        lines[cursor.y] = line.slice(0, cursor.x) + str + line.slice(cursor.x);
+        cursor.x += str.length;
       }
+
       render();
     };
 
-    stdin.on("keypress", onKey);
-
-    // Setup raw mode
-    readline.emitKeypressEvents(stdin);
-    if (stdin.isTTY) stdin.setRawMode(true);
-
     const cleanup = () => {
-      stdin.removeListener("keypress", onKey);
-      if (stdin.isTTY) stdin.setRawMode(false);
-
-      // Move to end of input
-      const width = stdout.columns || 80;
-      let totalRows = 0;
-      for (let line of lines) {
-        totalRows += Math.floor(line.length / width) + 1;
+      process.stdin.removeListener("keypress", onKey);
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
       }
-
-      // We are currently at cursor position.
-      // Move to start
-      readline.moveCursor(stdout, 0, -prevVisualCursorY);
-      readline.cursorTo(stdout, 0);
-
-      // Move to end
-      if (totalRows > 1) {
-        readline.moveCursor(stdout, 0, totalRows - 1);
-      }
-      // And print newline
-      stdout.write("\n");
+      // Move cursor to end of output
+      readline.moveCursor(stdout, 0, 1);
     };
+
+    // Initial render
+    render();
+
+    // Setup key listener
+    readline.emitKeypressEvents(process.stdin);
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+    process.stdin.on("keypress", onKey);
   });
 }
