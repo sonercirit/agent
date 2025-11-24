@@ -307,15 +307,15 @@ async def call_gemini(messages, tools, model=None):
 
             candidate = data["candidates"][0]
             # Debug: Print candidate keys
-            print_formatted_text(HTML(f"<style fg='#444444'>DEBUG: Candidate keys: {list(candidate.keys())}</style>"))
+            logger.debug(f"Candidate keys: {list(candidate.keys())}")
             
             content = candidate.get("content", {})
             parts = content.get("parts", [])
 
             # Debug: Print raw parts to see structure
-            print_formatted_text(HTML(f"<style fg='#444444'>DEBUG: Parts keys: {[list(p.keys()) for p in parts]}</style>"))
+            logger.debug(f"Parts keys: {[list(p.keys()) for p in parts]}")
             if parts:
-                 print_formatted_text(HTML(f"<style fg='#444444'>DEBUG: First part: {json.dumps(parts[0], indent=2)}</style>"))
+                 logger.debug(f"First part: {json.dumps(parts[0], indent=2)}")
 
             message_content = ""
             reasoning_content = ""
