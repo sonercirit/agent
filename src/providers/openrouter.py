@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 async def call_openrouter(messages, tools, model=None):
     effective_model = model or config.model
     is_anthropic = "anthropic" in effective_model or "claude" in effective_model
+    is_openai = "openai" in effective_model or "gpt" in effective_model or "o1" in effective_model or "o3" in effective_model or "o4" in effective_model
+    is_gemini = "gemini" in effective_model
     
     headers = {
         "Authorization": f"Bearer {config.api_key}",
@@ -39,6 +41,14 @@ async def call_openrouter(messages, tools, model=None):
         # headers["anthropic-beta"] = "prompt-caching-2024-07-31"
         # Force Anthropic as provider (not Google Vertex) to enable caching
         body["provider"] = {"order": ["Anthropic"], "allow_fallbacks": False}
+    
+    # Lock OpenAI models to OpenAI provider
+    if is_openai:
+        body["provider"] = {"order": ["OpenAI"], "allow_fallbacks": False}
+    
+    # Lock Gemini models to Google AI Studio provider
+    if is_gemini:
+        body["provider"] = {"order": ["Google AI Studio"], "allow_fallbacks": False}
 
     # Handle Google Search Trigger
     force_grounding = False
