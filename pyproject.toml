@@ -1,16 +1,24 @@
 [project]
 name = "agent"
 version = "0.1.0"
-description = "A powerful agentic AI assistant"
+description = "A powerful terminal-native AI assistant with tool execution"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "prompt_toolkit>=3.0.0",
+    "prompt-toolkit>=3.0.0",
     "requests>=2.0.0",
     "python-dotenv>=1.0.0",
-    "Pygments>=2.0.0",
+    "pygments>=2.0.0",
     "uvloop>=0.22.1",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.6",
+]
+
+[project.scripts]
+agent = "src.agent:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -19,7 +27,5 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
-[dependency-groups]
-dev = [
-    "ruff>=0.14.6",
-]
+[tool.ruff]
+line-length = 120

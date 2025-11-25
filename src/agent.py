@@ -1,10 +1,14 @@
+"""Main agent loop and UI."""
+
 import asyncio
+
 try:
     import uvloop
+
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 except ImportError:
     pass
-import sys
+
 import os
 import json
 import time
@@ -15,79 +19,53 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.formatted_text import HTML, FormattedText
 from prompt_toolkit.styles import Style
 from prompt_toolkit.lexers import PygmentsLexer
-from pygments.lexers.markup import MarkdownLexer
 from prompt_toolkit.application import Application
 from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.key_binding.vi_state import InputMode
+from pygments.lexers.markup import MarkdownLexer
 
 from .config import config
 from .llm import call_llm
-from .tools import tool_implementations, tools_schema, save_clipboard_image
-from .cache import manage_cache
-from .utils import ask_approval
+from .tools import TOOLS, TOOL_SCHEMAS, save_clipboard_image
 from .undo import UndoManager
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 
 # Restore working directory if provided
 if "AGENT_WORK_DIR" in os.environ:
     os.chdir(os.environ["AGENT_WORK_DIR"])
 
 
-
-# Setup Logging
 class PTKHandler(logging.Handler):
+    """Logging handler that uses prompt_toolkit for output."""
+
     def emit(self, record):
         try:
-            msg = self.format(record)
-            escaped_msg = html.escape(msg)
-            if record.levelno >= logging.ERROR:
-                style = "ansired"
-            elif record.levelno >= logging.WARNING:
-                style = "ansiyellow"
-            elif record.levelno >= logging.INFO:
-                style = "ansiwhite"
-            else:
-                style = "style fg='#888888'"
-
-            print_formatted_text(
-                HTML(
-                    f"<{style}>{escaped_msg}</{style if ' ' not in style else style.split()[0]}>"
-                )
-            )
+            msg = html.escape(self.format(record))
+            color = {logging.ERROR: "ansired", logging.WARNING: "ansiyellow"}.get(record.levelno, "ansiwhite")
+            print_formatted_text(HTML(f"<{color}>{msg}</{color}>"))
         except Exception:
             self.handleError(record)
 
 
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.DEBUG if config.debug else logging.INFO)
-# Remove existing handlers to avoid duplication if reloaded
-if root_logger.handlers:
-    root_logger.handlers = []
-
+# Configure logging
+logging.getLogger().handlers = []
 handler = PTKHandler()
-handler.setFormatter(
-    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-)
-root_logger.addHandler(handler)
-
+handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+logging.getLogger().addHandler(handler)
+logging.getLogger().setLevel(logging.DEBUG if config.debug else logging.INFO)
 logger = logging.getLogger("Agent")
 
-undo_manager = UndoManager()
+# ---------------------------------------------------------------------------
+# System Prompt
+# ---------------------------------------------------------------------------
 
-# Wrap update_file to track changes
-if "update_file" in tool_implementations:
-    original_update_file = tool_implementations["update_file"]
-
-    async def wrapped_update_file(path, content, old_content=None):
-        undo_manager.record_file_change(path)
-        return await original_update_file(path, content, old_content)
-
-    tool_implementations["update_file"] = wrapped_update_file
-
-system_prompt = """You are a powerful agentic AI assistant.
+SYSTEM_PROMPT = """You are a powerful agentic AI assistant.
 You have access to a bash tool which allows you to do almost anything on the system.
 You should use this tool to accomplish the user's requests.
 You are optimized for high reasoning and complex tasks.
@@ -121,145 +99,178 @@ For debugging and investigation:
 - Test hypotheses incrementally
 - Document findings as you go"""
 
-messages = [{"role": "system", "content": system_prompt}]
-last_request_time = 0
-total_cost = 0
+# ---------------------------------------------------------------------------
+# State
+# ---------------------------------------------------------------------------
+
+messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+undo_manager = UndoManager()
+total_cost = 0.0
+last_request_time = 0.0
 has_seen_cached_tokens = False
 
+# Wrap update_file to track changes for undo
+_original_update_file = TOOLS["update_file"]
 
-def handle_usage(usage, elapsed_minutes):
+
+async def _tracked_update_file(path, content, old_content=None):
+    undo_manager.record_file_change(path)
+    return await _original_update_file(path, content, old_content)
+
+
+TOOLS["update_file"] = _tracked_update_file
+
+# ---------------------------------------------------------------------------
+# Core Logic
+# ---------------------------------------------------------------------------
+
+
+def display_usage(usage: dict, elapsed_minutes: float):
+    """Display cost and cache information."""
     global total_cost, has_seen_cached_tokens
 
-    cost = usage.get("cost")
+    cost = usage.get("cost", 0)
     if cost:
         total_cost += cost
-        print_formatted_text(
-            HTML(
-                f"<ansicyan>Cost: ${cost:.6f} | Total Session Cost: ${total_cost:.6f}</ansicyan>"
-            )
-        )
+        print_formatted_text(HTML(f"<ansicyan>Cost: ${cost:.6f} | Total: ${total_cost:.6f}</ansicyan>"))
 
-    cached_tokens = (
-        usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
-        or usage.get("cachedContentTokenCount", 0)
-        # OpenRouter returns Anthropic cache info in these fields
+    cached = (
+        usage.get("cachedContentTokenCount", 0)
         or usage.get("cache_read_input_tokens", 0)
+        or usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
         or 0
     )
-    
-    # Track cache creation tokens for Anthropic via OpenRouter
-    cache_creation = usage.get("cache_creation_input_tokens", 0)
-    
-    # Show cache status
-    if cache_creation > 0 or cached_tokens > 0:
-        print_formatted_text(
-            HTML(
-                f"<ansigreen>Cache: {cached_tokens} read, {cache_creation} created</ansigreen>"
-            )
-        )
+    created = usage.get("cache_creation_input_tokens", 0)
 
-    if cached_tokens > 0:
+    if cached or created:
+        print_formatted_text(HTML(f"<ansigreen>Cache: {cached} read, {created} created</ansigreen>"))
+
+    if cached > 0:
         has_seen_cached_tokens = True
+    elif has_seen_cached_tokens:
+        ttl = 60.0 if config.provider == "gemini" else 5.0
+        reason = "Prefix mismatch" if elapsed_minutes < ttl - 1 else "Cache TTL expired"
+        print_formatted_text(HTML(f"<ansired>WARNING: Cache dropped to 0! ({reason})</ansired>"))
 
-    if has_seen_cached_tokens and cached_tokens == 0:
-        is_gemini = config.provider == "gemini" or "gemini" in config.model.lower()
-        cache_ttl = 60.0 if is_gemini else 5.0
-        reason = (
-            "Prefix mismatch or Checkpoint limit"
-            if elapsed_minutes < (cache_ttl - 1)
-            else "Cache TTL expired"
-        )
 
-        print_formatted_text(
-            HTML(
-                f"<ansired>WARNING: Cached tokens dropped to 0! (Elapsed: {elapsed_minutes:.1f} minutes). Cause: {reason}.</ansired>"
+async def execute_tools(tool_calls: list):
+    """Execute tool calls and add results to messages."""
+    print_formatted_text(HTML("\n<ansiyellow>Tool Calls:</ansiyellow>"))
+
+    # In manual mode, ask for approval before executing tools
+    if config.mode == "manual":
+        for tc in tool_calls:
+            name = tc["function"]["name"]
+            args = json.loads(tc["function"]["arguments"]) if tc["function"]["arguments"] else {}
+            print_formatted_text(FormattedText([("bold", f"  {name}"), ("", f"({json.dumps(args)})")]))
+
+        try:
+            approval_session = PromptSession()
+            response = await approval_session.prompt_async(
+                HTML("<ansicyan>Execute? [Y/n]: </ansicyan>")
             )
-        )
+            response = response.strip().lower()
+            if response in ("n", "no"):
+                print_formatted_text(HTML("<ansiyellow>Tool execution cancelled.</ansiyellow>"))
+                for tc in tool_calls:
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", "unknown"),
+                        "name": tc["function"]["name"],
+                        "content": "Tool execution cancelled by user."
+                    })
+                return
+        except (EOFError, KeyboardInterrupt):
+            print_formatted_text(HTML("\n<ansiyellow>Tool execution cancelled.</ansiyellow>"))
+            for tc in tool_calls:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", "unknown"),
+                    "name": tc["function"]["name"],
+                    "content": "Tool execution cancelled by user."
+                })
+            return
+
+    for tc in tool_calls:
+        name = tc["function"]["name"]
+        args = json.loads(tc["function"]["arguments"]) if tc["function"]["arguments"] else {}
+
+        if config.mode == "auto":
+            print_formatted_text(FormattedText([("bold", f"  {name}"), ("", f"({json.dumps(args)})")]))
+        logger.debug(f"Executing {name} with {args}")
+
+        if name in TOOLS:
+            try:
+                result = await TOOLS[name](**args)
+            except Exception as e:
+                result = f"Error: {e}"
+                logger.error(f"Tool error: {e}")
+        else:
+            result = f"Error: Tool '{name}' not found."
+
+        messages.append({"role": "tool", "tool_call_id": tc.get("id", "unknown"), "name": name, "content": str(result)})
+        print_formatted_text(FormattedText([("#888888", f"Result: {str(result)[:100]}...")]))
 
 
-async def _process_turn_logic(user_input, stop_check_callback=None):
+async def process_turn_logic(user_input: str, stop_check=None):
+    """Process a single turn of conversation."""
     global last_request_time
 
     undo_manager.start_turn(messages)
-
-    logger.debug(f"Processing turn with input: {user_input}")
     messages.append({"role": "user", "content": user_input})
 
-    turn_finished = False
-
-    while not turn_finished:
-        if stop_check_callback and stop_check_callback():
-            print_formatted_text(
-                HTML(
-                    "\n<ansiyellow>Stopping after current step as requested.</ansiyellow>"
-                )
-            )
+    while True:
+        if stop_check and stop_check():
+            print_formatted_text(HTML("\n<ansiyellow>Stopping after current step.</ansiyellow>"))
             break
 
+        request_time = time.time()
+        elapsed = (request_time - last_request_time) / 60.0 if last_request_time else 0
+        last_request_time = request_time
+
         try:
-            manage_cache(messages)
-
-            current_time = time.time() * 1000
-            elapsed_minutes = 0
-            if last_request_time > 0:
-                elapsed_minutes = (current_time - last_request_time) / 60000
-
-            logger.debug("Calling LLM...")
-            response = await call_llm(messages, tools_schema)
-            last_request_time = time.time() * 1000
-
-            response_message = response["message"]
-            usage = response["usage"]
-
-            logger.debug(f"LLM Response: {json.dumps(response_message, default=str)}")
-            logger.debug(f"Usage: {usage}")
-
-            if usage:
-                handle_usage(usage, elapsed_minutes)
-
-            messages.append(response_message)
-
-            # Show reasoning
-            if response_message.get("reasoning"):
-                print_formatted_text(
-                    HTML("\n<style fg='#888888'>=== Thinking Process ===</style>")
-                )
-                print_formatted_text(
-                    HTML("<style fg='#888888'>{}</style>").format(
-                        response_message["reasoning"]
-                    )
-                )
-                print_formatted_text(
-                    HTML("<style fg='#888888'>========================</style>\n")
-                )
-
-            if response_message.get("tool_calls"):
-                if stop_check_callback and stop_check_callback():
-                    print_formatted_text(
-                        HTML(
-                            "\n<ansiyellow>Stopping before executing tools as requested.</ansiyellow>"
-                        )
-                    )
-                    break
-                await handle_tool_calls(response_message["tool_calls"])
-            else:
-                print_formatted_text(HTML("\n<ansigreen>Assistant:</ansigreen>"))
-                print_formatted_text(HTML("{}").format(response_message["content"]))
-                print_formatted_text(HTML(""))
-                turn_finished = True
-
+            response = await call_llm(messages, TOOL_SCHEMAS)
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.exception("Error during turn processing")
-            print_formatted_text(HTML("\n<ansired>Error: {}</ansired>").format(str(e)))
-            turn_finished = True
+            logger.exception("LLM call failed")
+            print_formatted_text(HTML(f"\n<ansired>Error: {e}</ansired>"))
+            break
+
+        msg = response["message"]
+        if response.get("usage"):
+            display_usage(response["usage"], elapsed)
+
+        # Display reasoning if present
+        if msg.get("reasoning"):
+            print_formatted_text(HTML(f"\n<style fg='#888888'>{html.escape(msg['reasoning'][:500])}...</style>"))
+
+        # Add assistant message (preserve reasoning_details for Gemini via OpenRouter)
+        assistant_msg = {"role": "assistant", "content": msg.get("content") or ""}
+        if msg.get("tool_calls"):
+            assistant_msg["tool_calls"] = msg["tool_calls"]
+        if msg.get("reasoning"):
+            assistant_msg["reasoning"] = msg["reasoning"]
+        if msg.get("reasoning_details"):
+            assistant_msg["reasoning_details"] = msg["reasoning_details"]
+        messages.append(assistant_msg)
+
+        # Display response
+        if msg.get("content"):
+            print_formatted_text(HTML(f"\n<ansigreen>Assistant:</ansigreen>\n{html.escape(msg['content'])}"))
+
+        # Handle tool calls or finish
+        if msg.get("tool_calls"):
+            await execute_tools(msg["tool_calls"])
+        else:
+            break
 
 
-async def process_turn(user_input):
+async def process_turn(user_input: str):
+    """Process turn with UI wrapper for cancellation."""
     kb = KeyBindings()
-    processing_task = None
     stop_requested = False
+    task = None
 
     @kb.add("c-w")
     def _(event):
@@ -268,98 +279,43 @@ async def process_turn(user_input):
 
     @kb.add("c-c")
     def _(event):
-        if processing_task:
-            processing_task.cancel()
+        if task:
+            task.cancel()
 
-    def get_status_text():
+    def status():
         if stop_requested:
-            return HTML(
-                " <ansiyellow>Stopping after current step...</ansiyellow> (Ctrl+C to force quit)"
-            )
-        return HTML(
-            " <ansigreen>Thinking...</ansigreen> (Ctrl+W to stop gracefully, Ctrl+C to force quit)"
-        )
+            return HTML(" <ansiyellow>Stopping...</ansiyellow> (Ctrl+C to force)")
+        return HTML(" <ansigreen>Thinking...</ansigreen> (Ctrl+W: stop, Ctrl+C: cancel)")
 
-    status_window = Window(
-        content=FormattedTextControl(get_status_text), height=1, style="class:status"
-    )
+    app = Application(layout=Layout(Window(FormattedTextControl(status), height=1)), key_bindings=kb)
 
-    app = Application(layout=Layout(status_window), key_bindings=kb, full_screen=False)
-
-    async def run_logic():
-        nonlocal processing_task
+    async def run():
+        nonlocal task
         try:
-            await _process_turn_logic(user_input, lambda: stop_requested)
+            await process_turn_logic(user_input, lambda: stop_requested)
         except asyncio.CancelledError:
-            print_formatted_text(HTML("\n<ansired>User requested interrupt.</ansired>"))
+            print_formatted_text(HTML("\n<ansired>Interrupted.</ansired>"))
         finally:
             app.exit()
 
     with patch_stdout():
-        processing_task = asyncio.create_task(run_logic())
+        task = asyncio.create_task(run())
         await app.run_async()
-        if not processing_task.done():
-            processing_task.cancel()
+        if not task.done():
+            task.cancel()
             try:
-                await processing_task
+                await task
             except asyncio.CancelledError:
                 pass
 
 
-async def handle_tool_calls(tool_calls):
-    print_formatted_text(HTML("\n<ansiyellow>Tool Calls:</ansiyellow>"))
-
-    for tool_call in tool_calls:
-        func_name = tool_call["function"]["name"]
-        args_str = tool_call["function"]["arguments"]
-
-        try:
-            args = json.loads(args_str)
-        except json.JSONDecodeError:
-            args = {}
-
-        print_formatted_text(
-            FormattedText([('bold', f"  {func_name}"), ('', f"({json.dumps(args)})")])
-        )
-        logger.debug(f"Executing tool {func_name} with args: {args}")
-
-        # Approval check for sensitive tools
-        if config.mode == "manual":
-            # Simple approval for now, can be expanded
-            pass
-
-        if func_name in tool_implementations:
-            try:
-                result = await tool_implementations[func_name](**args)
-            except Exception as e:
-                result = f"Error executing tool: {str(e)}"
-                logger.error(f"Tool execution error: {e}")
-        else:
-            result = f"Error: Tool '{func_name}' not found."
-            logger.error(result)
-
-        # Add tool result to messages
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call.get("id", "call_unknown"),
-                "name": func_name,
-                "content": str(result),
-            }
-        )
-
-        logger.debug(f"Tool Result: {str(result)}")
-        print_formatted_text(
-            FormattedText([('#888888', f"Result: {str(result)[:100]}...")])
-        )
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 
 async def main():
-    print_formatted_text(
-        HTML("<ansicyan>Agent started in {} mode using model {}</ansicyan>").format(
-            html.escape(str(config.mode)), html.escape(str(config.model))
-        )
-    )
+    print_formatted_text(HTML(f"<ansicyan>Agent started ({config.mode} mode, {config.model})</ansicyan>"))
 
     if config.initial_prompt:
         print_formatted_text(HTML("\n<ansicyan>Executing initial prompt...</ansicyan>"))
@@ -369,25 +325,12 @@ async def main():
 
     @kb.add("escape", "z")
     def _(event):
-        # Find the last user message in current messages before undoing
-        last_user_content = ""
-        for msg in reversed(messages):
-            if msg["role"] == "user":
-                last_user_content = msg["content"]
-                break
-
-        restored_messages = undo_manager.undo()
-        if restored_messages is not None:
-            # Restore messages
-            messages[:] = restored_messages
-
-            # Restore input buffer
-            event.current_buffer.text = last_user_content
-            print_formatted_text(
-                HTML(
-                    "\n<ansiyellow>Undoing last turn and reverting changes...</ansiyellow>"
-                )
-            )
+        last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+        restored = undo_manager.undo()
+        if restored:
+            messages[:] = restored
+            event.current_buffer.text = last_user if isinstance(last_user, str) else ""
+            print_formatted_text(HTML("\n<ansiyellow>Undone last turn.</ansiyellow>"))
         else:
             print_formatted_text(HTML("\n<ansired>Nothing to undo.</ansired>"))
 
@@ -410,42 +353,24 @@ async def main():
         vi_mode=True,
         multiline=True,
         lexer=PygmentsLexer(MarkdownLexer),
-        style=Style.from_dict(
-            {
-                "prompt": "ansicyan bold",
-                "bottom-toolbar": "bg:#333333 #ffffff",
-            }
-        ),
+        style=Style.from_dict({"prompt": "ansicyan bold"}),
     )
 
-    def bottom_toolbar():
-        if session.app.vi_state.input_mode == InputMode.INSERT:
-            return HTML(" <b>[INSERT]</b>  <i>Press Esc to enter command mode</i>")
-        elif session.app.vi_state.input_mode == InputMode.NAVIGATION:
-            return HTML(" <b>[COMMAND]</b> <i>Press i to enter insert mode</i>")
-        elif session.app.vi_state.input_mode == InputMode.REPLACE:
-            return HTML(" <b>[REPLACE]</b>")
-        elif session.app.vi_state.input_mode == InputMode.REPLACE_SINGLE:
-            return HTML(" <b>[REPLACE_SINGLE]</b>")
-        return ""
+    def toolbar():
+        mode = session.app.vi_state.input_mode
+        labels = {InputMode.INSERT: "INSERT", InputMode.NAVIGATION: "COMMAND", InputMode.REPLACE: "REPLACE"}
+        return HTML(f" <b>[{labels.get(mode, mode)}]</b>")
 
     while True:
         try:
             user_input = await session.prompt_async(
-                HTML(
-                    "<b>User (Alt+Enter: Send, Alt+E: Editor, Alt+I: Image, Ctrl+C: Cancel, exit: Quit):</b>\n"
-                ),
-                bottom_toolbar=bottom_toolbar,
+                HTML("<b>User (Alt+Enter: Send, Alt+E: Editor, Alt+I: Image, Alt+Z: Undo, Ctrl+D: Exit):</b>\n"),
+                bottom_toolbar=toolbar,
             )
-
             if user_input.strip().lower() == "exit":
                 break
-
-            if not user_input.strip():
-                continue
-
-            await process_turn(user_input)
-
+            if user_input.strip():
+                await process_turn(user_input)
         except KeyboardInterrupt:
             continue
         except EOFError:

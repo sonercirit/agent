@@ -1,95 +1,60 @@
+"""Anthropic prompt caching management for OpenRouter."""
+
 import logging
-from .config import config
 
 logger = logging.getLogger(__name__)
 
 
-def manage_cache(messages):
-    is_anthropic = "anthropic" in config.model or "claude" in config.model
-
-    if not is_anthropic:
+def apply_anthropic_cache(messages: list, model: str):
+    """Apply Anthropic cache_control markers to messages (mutates in-place)."""
+    if "anthropic" not in model.lower() and "claude" not in model.lower():
         return
 
-    # 1. Ensure System Prompt has cache_control
-    system_msg = next((m for m in messages if m["role"] == "system"), None)
-    if system_msg:
-        if isinstance(system_msg["content"], str):
-            system_msg["content"] = [
-                {
-                    "type": "text",
-                    "text": system_msg["content"],
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
-        elif isinstance(system_msg["content"], list):
-            has_cache = any(
-                block.get("cache_control") for block in system_msg["content"]
-            )
-            if not has_cache and system_msg["content"]:
-                system_msg["content"][-1]["cache_control"] = {"type": "ephemeral"}
-
-    # 2. Manage History Checkpoints
-    SYSTEM_AND_TOOLS_CHECKPOINTS = 2
-    MAX_CHECKPOINTS = 4
-    HISTORY_CHECKPOINTS_QUOTA = MAX_CHECKPOINTS - SYSTEM_AND_TOOLS_CHECKPOINTS
-    CHECKPOINT_INTERVAL = 8
-
-    candidate_indices = []
-    for i, msg in enumerate(messages):
+    # Cache system prompt
+    for msg in messages:
         if msg["role"] == "system":
-            continue
-        if i % CHECKPOINT_INTERVAL == 0 and i > 0:
-            candidate_indices.append(i)
+            if isinstance(msg["content"], str):
+                msg["content"] = [{"type": "text", "text": msg["content"], "cache_control": {"type": "ephemeral"}}]
+            elif isinstance(msg["content"], list) and msg["content"]:
+                if not any(b.get("cache_control") for b in msg["content"]):
+                    msg["content"][-1]["cache_control"] = {"type": "ephemeral"}
+            break
 
-    final_indices = []
-    for index in candidate_indices:
-        best_index = -1
-        search_order = [index, index - 1, index + 1, index - 2, index + 2]
+    # Add checkpoints every N messages (max 2 for history, keeping 2 for system+tools)
+    CHECKPOINT_INTERVAL = 8
+    MAX_HISTORY_CHECKPOINTS = 2
 
-        for search_idx in search_order:
-            if 0 < search_idx < len(messages):
-                m = messages[search_idx]
+    candidates = [i for i, m in enumerate(messages) if m["role"] != "system" and i > 0 and i % CHECKPOINT_INTERVAL == 0]
+
+    # Find valid checkpoint indices (messages with content)
+    checkpoints = []
+    for idx in candidates:
+        for offset in [0, -1, 1, -2, 2]:
+            check_idx = idx + offset
+            if 0 < check_idx < len(messages):
+                m = messages[check_idx]
                 has_content = m.get("content") and (
-                    isinstance(m["content"], str)
-                    or (isinstance(m["content"], list) and len(m["content"]) > 0)
+                    isinstance(m["content"], str) or (isinstance(m["content"], list) and m["content"])
                 )
-                if has_content:
-                    best_index = search_idx
+                if has_content and check_idx not in checkpoints:
+                    checkpoints.append(check_idx)
                     break
 
-        if best_index != -1 and best_index not in final_indices:
-            final_indices.append(best_index)
+    checkpoints = checkpoints[-MAX_HISTORY_CHECKPOINTS:]
 
-    if len(final_indices) > HISTORY_CHECKPOINTS_QUOTA:
-        final_indices = final_indices[-HISTORY_CHECKPOINTS_QUOTA:]
-
+    # Apply/remove cache markers
     for i, msg in enumerate(messages):
         if msg["role"] == "system":
             continue
 
-        is_desired = i in final_indices
-        has_checkpoint = False
+        is_checkpoint = i in checkpoints
+        has_cache = isinstance(msg["content"], list) and any(b.get("cache_control") for b in msg["content"])
 
-        if isinstance(msg["content"], list):
-            has_checkpoint = any(block.get("cache_control") for block in msg["content"])
-
-        if has_checkpoint and not is_desired:
-            if isinstance(msg["content"], list):
-                for block in msg["content"]:
-                    if "cache_control" in block:
-                        del block["cache_control"]
-            logger.debug(f"[Cache] Checkpoint removed at message {i}")
-
-        elif not has_checkpoint and is_desired:
+        if has_cache and not is_checkpoint:
+            for block in msg["content"]:
+                block.pop("cache_control", None)
+        elif not has_cache and is_checkpoint:
             if isinstance(msg["content"], str):
-                msg["content"] = [
-                    {
-                        "type": "text",
-                        "text": msg["content"],
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
-            elif isinstance(msg["content"], list):
-                if msg["content"]:
-                    msg["content"][-1]["cache_control"] = {"type": "ephemeral"}
-            logger.debug(f"[Cache] Checkpoint added at message {i}")
+                msg["content"] = [{"type": "text", "text": msg["content"], "cache_control": {"type": "ephemeral"}}]
+            elif isinstance(msg["content"], list) and msg["content"]:
+                msg["content"][-1]["cache_control"] = {"type": "ephemeral"}

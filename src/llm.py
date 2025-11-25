@@ -1,10 +1,12 @@
+"""LLM provider router."""
+
 from .config import config
-from .providers.openrouter import call_openrouter
 from .providers.gemini import call_gemini
+from .providers.openrouter import call_openrouter
 
 
-async def call_llm(messages, tools, model=None):
+async def call_llm(messages: list, tools: list, model: str = None) -> dict:
+    """Route LLM calls to the configured provider."""
     if config.provider == "gemini":
         return await call_gemini(messages, tools, model)
-    else:
-        return await call_openrouter(messages, tools, model)
+    return await call_openrouter(messages, tools, model)

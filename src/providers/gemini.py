@@ -1,3 +1,5 @@
+"""Gemini API provider."""
+
 import requests
 import json
 import time
@@ -11,388 +13,259 @@ from ..config import config
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Pricing (per 1M tokens)
+# ---------------------------------------------------------------------------
 
-def fix_schema_types(schema):
-    if not schema or not isinstance(schema, dict):
-        return schema
+PRICING = {
+    "gemini-2.5-pro": {
+        "input": 1.25,
+        "output": 10.00,
+        "cached": 0.125,
+        "high_input": 2.50,
+        "high_output": 15.00,
+        "high_cached": 0.25,
+    },
+    "gemini-3-pro": {
+        "input": 2.00,
+        "output": 12.00,
+        "cached": 0.20,
+        "high_input": 4.00,
+        "high_output": 18.00,
+        "high_cached": 0.40,
+    },
+    "gemini-3-pro-preview": {
+        "input": 2.00,
+        "output": 12.00,
+        "cached": 0.20,
+        "high_input": 4.00,
+        "high_output": 18.00,
+        "high_cached": 0.40,
+    },
+    "gemini-2.5-flash": {"input": 0.30, "output": 2.50, "cached": 0.03},
+    "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40, "cached": 0.01},
+    "gemini-2.0-flash": {"input": 0.10, "output": 0.40, "cached": 0.025},
+    "gemini-2.0-flash-lite": {"input": 0.075, "output": 0.30, "cached": 0.0},
+}
 
-    new_schema = schema.copy()
 
-    if "type" in new_schema and isinstance(new_schema["type"], str):
-        new_schema["type"] = new_schema["type"].upper()
+def calculate_cost(model: str, usage: dict) -> float:
+    """Calculate cost from usage metadata."""
+    if not usage:
+        return 0
 
-    if "properties" in new_schema:
-        new_props = {}
-        for key, prop in new_schema["properties"].items():
-            new_props[key] = fix_schema_types(prop)
-        new_schema["properties"] = new_props
+    model_id = model.lower().replace("google/", "")
+    pricing = PRICING.get(model_id)
+    if not pricing:
+        return 0
 
-    if "items" in new_schema:
-        new_schema["items"] = fix_schema_types(new_schema["items"])
+    prompt = usage.get("promptTokenCount", 0)
+    output = usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0)
+    cached = usage.get("cachedContentTokenCount", 0)
 
-    return new_schema
-
-
-def map_tools_to_gemini(tools):
-    gemini_tools = []
-
-    # We no longer force grounding based on tool definition here,
-    # because we handle it dynamically in call_gemini based on the conversation state.
-    # However, we still need to filter out google_search from the function declarations
-    # if we are NOT in grounding mode, so the model can call it as a function.
-    # Actually, we WANT the model to call it as a function first.
-
-    if tools:
-        gemini_tools.append(
-            {
-                "function_declarations": [
-                    {
-                        "name": t["function"]["name"],
-                        "description": t["function"]["description"],
-                        "parameters": fix_schema_types(t["function"]["parameters"]),
-                    }
-                    for t in tools
-                ]
-            }
+    # Use high-volume pricing if > 200k tokens
+    if prompt > 200000 and "high_input" in pricing:
+        return (
+            ((prompt - cached) / 1e6) * pricing["high_input"]
+            + (output / 1e6) * pricing["high_output"]
+            + (cached / 1e6) * pricing["high_cached"]
         )
 
-    return gemini_tools
+    return (
+        ((prompt - cached) / 1e6) * pricing["input"]
+        + (output / 1e6) * pricing["output"]
+        + (cached / 1e6) * pricing["cached"]
+    )
 
 
-def format_gemini_parts(content):
+# ---------------------------------------------------------------------------
+# Message/Schema Conversion
+# ---------------------------------------------------------------------------
+
+
+def to_gemini_schema(schema: dict) -> dict:
+    """Convert OpenAI schema types to Gemini (uppercase)."""
+    if not schema or not isinstance(schema, dict):
+        return schema
+    result = schema.copy()
+    if "type" in result and isinstance(result["type"], str):
+        result["type"] = result["type"].upper()
+    if "properties" in result:
+        result["properties"] = {k: to_gemini_schema(v) for k, v in result["properties"].items()}
+    if "items" in result:
+        result["items"] = to_gemini_schema(result["items"])
+    return result
+
+
+def to_gemini_parts(content) -> list:
+    """Convert OpenAI content format to Gemini parts."""
     if not content:
         return []
     if isinstance(content, str):
         return [{"text": content}]
     if isinstance(content, list):
         parts = []
-        for part in content:
-            if isinstance(part, str):
-                parts.append({"text": part})
-            elif isinstance(part, dict):
-                if part.get("type") == "text":
-                    parts.append({"text": part["text"]})
-                elif part.get("type") == "image_url":
-                    # Handle base64 image
-                    url = part["image_url"]["url"]
+        for item in content:
+            if isinstance(item, str):
+                parts.append({"text": item})
+            elif isinstance(item, dict):
+                if item.get("type") == "text":
+                    parts.append({"text": item["text"]})
+                elif item.get("type") == "image_url":
+                    url = item["image_url"]["url"]
                     if url.startswith("data:image/"):
-                        mime_type = url.split(";")[0].split(":")[1]
-                        data = url.split(",")[1]
-                        parts.append(
-                            {"inline_data": {"mime_type": mime_type, "data": data}}
-                        )
+                        mime, data = url.split(";")[0].split(":")[1], url.split(",")[1]
+                        parts.append({"inline_data": {"mime_type": mime, "data": data}})
         return parts
     return []
 
 
-def calculate_gemini_cost(model, usage):
-    if not usage:
-        return 0
-
-    # Strip 'google/' prefix if present for matching
-    model_id = model.lower()
-    if model_id.startswith("google/"):
-        model_id = model_id.replace("google/", "")
-
-    prompt_tokens = usage.get("promptTokenCount", 0)
-    output_tokens = usage.get("candidatesTokenCount", 0) + usage.get(
-        "thoughtsTokenCount", 0
-    )
-    cached_tokens = usage.get("cachedContentTokenCount", 0)
-    regular_input_tokens = max(0, prompt_tokens - cached_tokens)
-
-    # Pricing per 1M tokens
-    pricing = None
-
-    if model_id == "gemini-2.5-pro":
-        # Gemini 2.5 Pro
-        # Input: $1.25 (<=200k), $2.50 (>200k)
-        # Output: $10.00 (<=200k), $15.00 (>200k)
-        # Cached: $0.125 (<=200k), $0.25 (>200k)
-        if prompt_tokens > 200000:
-            pricing = {"input": 2.50, "output": 15.00, "cached": 0.25}
-        else:
-            pricing = {"input": 1.25, "output": 10.00, "cached": 0.125}
-
-    elif model_id == "gemini-3-pro" or model_id == "gemini-3-pro-preview":
-        # Gemini 3 Pro
-        # Input: $2.00 (<=200k), $4.00 (>200k)
-        # Output: $12.00 (<=200k), $18.00 (>200k)
-        # Cached: $0.20 (<=200k), $0.40 (>200k)
-        if prompt_tokens > 200000:
-            pricing = {"input": 4.00, "output": 18.00, "cached": 0.40}
-        else:
-            pricing = {"input": 2.00, "output": 12.00, "cached": 0.20}
-
-    elif model_id == "gemini-2.5-flash-lite":
-        # Gemini 2.5 Flash-Lite
-        # Input: $0.10
-        # Output: $0.40
-        # Cached: $0.01
-        pricing = {"input": 0.10, "output": 0.40, "cached": 0.01}
-
-    elif model_id == "gemini-2.5-flash":
-        # Gemini 2.5 Flash
-        # Input: $0.30
-        # Output: $2.50
-        # Cached: $0.03
-        pricing = {"input": 0.30, "output": 2.50, "cached": 0.03}
-
-    elif model_id == "gemini-2.0-flash-lite":
-        # Gemini 2.0 Flash-Lite
-        # Input: $0.075
-        # Output: $0.30
-        # Cached: N/A (0)
-        pricing = {"input": 0.075, "output": 0.30, "cached": 0.0}
-
-    elif model_id == "gemini-2.0-flash":
-        # Gemini 2.0 Flash
-        # Input: $0.10
-        # Output: $0.40
-        # Cached: $0.025
-        pricing = {"input": 0.10, "output": 0.40, "cached": 0.025}
-
-    if not pricing:
-        return 0
-
-    input_cost = (regular_input_tokens / 1_000_000) * pricing["input"]
-    output_cost = (output_tokens / 1_000_000) * pricing["output"]
-    cached_cost = (cached_tokens / 1_000_000) * pricing["cached"]
-
-    return input_cost + output_cost + cached_cost
-
-
-async def call_gemini(messages, tools, model=None):
-    model_id = model or config.model
-    if model_id.startswith("google/"):
-        model_id = model_id.replace("google/", "")
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={config.gemini_api_key}"
-
-    gemini_messages = []
+def to_gemini_messages(messages: list) -> tuple[list, dict | None]:
+    """Convert OpenAI messages to Gemini format. Returns (contents, system_instruction)."""
+    contents = []
     system_instruction = None
 
     for msg in messages:
         if msg["role"] == "system":
-            system_instruction = {"parts": format_gemini_parts(msg["content"])}
+            system_instruction = {"parts": to_gemini_parts(msg["content"])}
         elif msg["role"] == "user":
-            gemini_messages.append(
-                {"role": "user", "parts": format_gemini_parts(msg["content"])}
-            )
+            contents.append({"role": "user", "parts": to_gemini_parts(msg["content"])})
         elif msg["role"] == "assistant":
-            parts = []
-            if msg.get("content"):
-                parts.extend(format_gemini_parts(msg["content"]))
-            if msg.get("tool_calls"):
-                for tc in msg["tool_calls"]:
-                    part = {
-                        "functionCall": {
-                            "name": tc["function"]["name"],
-                            "args": json.loads(tc["function"]["arguments"]),
-                        }
-                    }
-                    if "thought_signature" in tc["function"]:
-                        part["thoughtSignature"] = tc["function"]["thought_signature"]
-
-                    parts.append(part)
-
+            parts = to_gemini_parts(msg.get("content"))
+            for tc in msg.get("tool_calls") or []:
+                part = {
+                    "functionCall": {"name": tc["function"]["name"], "args": json.loads(tc["function"]["arguments"])}
+                }
+                if "thought_signature" in tc["function"]:
+                    part["thoughtSignature"] = tc["function"]["thought_signature"]
+                parts.append(part)
             if parts:
-                gemini_messages.append({"role": "model", "parts": parts})
+                contents.append({"role": "model", "parts": parts})
         elif msg["role"] == "tool":
-            gemini_messages.append(
+            contents.append(
                 {
                     "role": "function",
-                    "parts": [
-                        {
-                            "functionResponse": {
-                                "name": msg["name"],
-                                "response": {"result": msg["content"]},
-                            }
-                        }
-                    ],
+                    "parts": [{"functionResponse": {"name": msg["name"], "response": {"result": msg["content"]}}}],
                 }
             )
 
-    # Check if the last message is a tool response from google_search
-    # If so, we need to enable grounding for this turn
-    force_grounding_turn = False
+    return contents, system_instruction
 
-    # We removed the check for messages[-1]["name"] == "google_search"
-    # because google_search is now a subagent that returns text.
-    # The main agent should retain access to all tools.
 
-    # Check if the tools list contains the special trigger tool (used by the subagent)
-    if tools:
-        for t in tools:
-            if t["function"]["name"] == "__google_search_trigger__":
-                force_grounding_turn = True
-                break
+def to_gemini_tools(tools: list) -> list:
+    """Convert OpenAI tools format to Gemini."""
+    if not tools:
+        return []
+    return [
+        {
+            "function_declarations": [
+                {
+                    "name": t["function"]["name"],
+                    "description": t["function"]["description"],
+                    "parameters": to_gemini_schema(t["function"]["parameters"]),
+                }
+                for t in tools
+            ]
+        }
+    ]
+
+
+# ---------------------------------------------------------------------------
+# API Call
+# ---------------------------------------------------------------------------
+
+
+async def call_gemini(messages: list, tools: list, model: str = None) -> dict:
+    """Call Gemini API. Returns dict with 'message' and 'usage'."""
+    model_id = (model or config.model).replace("google/", "")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={config.gemini_api_key}"
+
+    contents, system_instruction = to_gemini_messages(messages)
+
+    # Check for google search trigger
+    use_grounding = any(t["function"]["name"] == "__google_search_trigger__" for t in tools) if tools else False
 
     body = {
-        "contents": gemini_messages,
-        "tools": map_tools_to_gemini(tools)
-        if not force_grounding_turn
-        else [{"googleSearch": {}}],
-        "generationConfig": {
-            "temperature": 0.0  # Agentic
-        },
+        "contents": contents,
+        "tools": [{"googleSearch": {}}] if use_grounding else to_gemini_tools(tools),
+        "generationConfig": {"temperature": 0.0},
     }
 
-    # Enable thinking for supported models
-    # Logic ported from JS version: enable for "thinking" or "pro" models
-    if "thinking" in model_id.lower() or "pro" in model_id.lower():
+    # Enable thinking for pro models
+    if "pro" in model_id.lower():
         body["generationConfig"]["thinkingConfig"] = {"includeThoughts": True}
-        # Ensure enough tokens for thoughts
         body["generationConfig"]["maxOutputTokens"] = 64000
 
     if system_instruction:
         body["systemInstruction"] = system_instruction
 
-    MAX_RETRIES = 3
-    attempt = 0
-    last_error = None
-
-    while attempt < MAX_RETRIES:
+    # Retry loop
+    for attempt in range(3):
         try:
             response = await asyncio.to_thread(
-                requests.post,
-                url,
-                headers={"Content-Type": "application/json"},
-                json=body,
-                timeout=120,
+                requests.post, url, headers={"Content-Type": "application/json"}, json=body, timeout=120
             )
 
-            # Handle thinkingConfig not supported error (400)
+            # Handle thinkingConfig not supported
             if response.status_code == 400 and "thinkingConfig" in response.text:
-                logger.warning(
-                    "Model does not support thinkingConfig. Retrying without it."
-                )
-                if "thinkingConfig" in body["generationConfig"]:
-                    del body["generationConfig"]["thinkingConfig"]
-                    # Keep maxOutputTokens as it might be useful/supported
-
-                # Retry immediately
+                logger.warning("Model doesn't support thinkingConfig, retrying without it.")
+                body["generationConfig"].pop("thinkingConfig", None)
                 response = await asyncio.to_thread(
-                    requests.post,
-                    url,
-                    headers={"Content-Type": "application/json"},
-                    json=body,
-                    timeout=120,
+                    requests.post, url, headers={"Content-Type": "application/json"}, json=body, timeout=120
                 )
 
             if response.status_code != 200:
-                error_text = response.text
-                last_error = f"Status: {response.status_code}\nBody: {error_text}"
-                logger.warning(f"Raw response status: {response.status_code}")
-                logger.warning(f"Raw response body: {error_text}")
-
                 if response.status_code >= 500 or response.status_code == 429:
-                    logger.warning(
-                        f"Attempt {attempt + 1} failed: {response.status_code}. Retrying..."
-                    )
-                    logger.info("Starting retry...")
-                    attempt += 1
-                    await asyncio.sleep(1 * (2**attempt))
+                    logger.warning(f"Attempt {attempt + 1} failed: {response.status_code}. Retrying...")
+                    await asyncio.sleep(2**attempt)
                     continue
-                raise Exception(
-                    f"Gemini API error: {response.status_code} - {error_text}"
-                )
+                raise Exception(f"Gemini API error: {response.status_code} - {response.text}")
 
             data = response.json()
 
-            if "usageMetadata" in data:
-                print_formatted_text(
-                    HTML(
-                        f"<style fg='#666666'>Token Usage: {html.escape(json.dumps(data['usageMetadata'], indent=2))}</style>"
-                    )
-                )
-                data["usageMetadata"]["cost"] = calculate_gemini_cost(
-                    model_id, data["usageMetadata"]
-                )
+            # Process usage
+            usage = data.get("usageMetadata", {})
+            if usage:
+                print_formatted_text(HTML(f"<style fg='#666666'>Tokens: {html.escape(json.dumps(usage))}</style>"))
+                usage["cost"] = calculate_cost(model_id, usage)
 
             if "candidates" not in data or not data["candidates"]:
-                if data.get("promptFeedback"):
-                    raise Exception(
-                        f"Blocked by safety: {json.dumps(data['promptFeedback'])}"
-                    )
-                raise Exception("No candidates returned")
+                raise Exception(f"No candidates: {json.dumps(data.get('promptFeedback', data))}")
 
-            candidate = data["candidates"][0]
-            # Debug: Print candidate keys
-            logger.debug(f"Candidate keys: {list(candidate.keys())}")
-
-            content = candidate.get("content", {})
-            parts = content.get("parts", [])
-
-            # Debug: Print raw parts to see structure
-            logger.debug(f"Parts keys: {[list(p.keys()) for p in parts]}")
-            if parts:
-                logger.debug(f"First part: {json.dumps(parts[0], indent=2)}")
-
-            message_content = ""
-            reasoning_content = ""
-            tool_calls = []
+            # Parse response
+            parts = data["candidates"][0].get("content", {}).get("parts", [])
+            content, reasoning, tool_calls = "", "", []
 
             for part in parts:
-                # Handle reasoning/thought
-                # Check for 'thought' key. It could be a boolean flag (with text in 'text')
-                # or it could be the thought content itself (string).
-                thought_val = part.get("thought")
-                if thought_val:
-                    if isinstance(thought_val, str):
-                        reasoning_content += thought_val + "\n"
-                    else:
-                        reasoning_content += part.get("text", "") + "\n"
-
-                # Handle normal text
+                if part.get("thought"):
+                    reasoning += (part.get("text", "") if isinstance(part["thought"], bool) else part["thought"]) + "\n"
                 elif "text" in part:
-                    message_content += part["text"]
-
+                    content += part["text"]
                 if "functionCall" in part:
-                    fc = part["functionCall"]
-                    tool_call = {
-                        "id": f"call_{int(time.time())}_{random.randint(1000, 9999)}",  # Gemini doesn't give IDs
+                    tc = {
+                        "id": f"call_{int(time.time())}_{random.randint(1000, 9999)}",
                         "type": "function",
                         "function": {
-                            "name": fc["name"],
-                            "arguments": json.dumps(fc["args"]),
+                            "name": part["functionCall"]["name"],
+                            "arguments": json.dumps(part["functionCall"]["args"]),
                         },
                     }
                     if "thoughtSignature" in part:
-                        tool_call["function"]["thought_signature"] = part[
-                            "thoughtSignature"
-                        ]
-
-                    tool_calls.append(tool_call)
+                        tc["function"]["thought_signature"] = part["thoughtSignature"]
+                    tool_calls.append(tc)
 
             return {
                 "message": {
                     "role": "assistant",
-                    "content": message_content,
-                    "reasoning": reasoning_content.strip()
-                    if reasoning_content
-                    else None,
-                    "tool_calls": tool_calls if tool_calls else None,
+                    "content": content,
+                    "reasoning": reasoning.strip() or None,
+                    "tool_calls": tool_calls or None,
                 },
-                "usage": data.get("usageMetadata"),
+                "usage": usage,
             }
 
         except requests.exceptions.RequestException as e:
-            last_error = f"Network error: {str(e)}"
-            logger.warning(f"Attempt {attempt + 1} failed: {last_error}")
+            logger.warning(f"Attempt {attempt + 1} failed: {e}")
+            await asyncio.sleep(2**attempt)
 
-            if hasattr(e, "response") and e.response is not None:
-                status = e.response.status_code
-                body_text = e.response.text
-                last_error += f"\nStatus: {status}\nBody: {body_text}"
-                logger.warning(f"Raw response status: {status}")
-                logger.warning(f"Raw response body: {body_text}")
-
-            logger.info("Starting retry...")
-            attempt += 1
-            await asyncio.sleep(1 * (2**attempt))
-            continue
-
-    raise Exception(
-        f"Failed to call Gemini API after {MAX_RETRIES} retries.\nLast error details:\n{last_error}"
-    )
+    raise Exception("Failed to call Gemini API after 3 retries.")

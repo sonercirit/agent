@@ -1,132 +1,92 @@
 # Agent
 
-A terminal-native, high-reasoning AI operator designed for complex tasks. It orchestrates local tools, manages heavy-duty LLM reasoning (Gemini/OpenRouter), and maintains a robust, auditable history.
+A terminal-native AI assistant with tool execution, designed for complex agentic tasks.
 
-**Key Features:**
+## Features
 
-- **Observability**: Real-time cost tracking, cache telemetry, and reason-trace streaming.
-- **Safety**: Granular "Undo" (git/file-based), manual approval modes, and graceful stops.
-- **Ergonomics**: `prompt_toolkit` UI with Vim bindings, syntax highlighting, and clipboard image support.
-- **Performance**: Integrated `uvloop` for blazing fast async I/O and zero input lag.
+- **Multi-provider**: Gemini (direct) and OpenRouter (Claude, GPT, etc.)
+- **Tool execution**: bash, file operations, web search, image analysis
+- **Undo system**: Git-based or manual file tracking
+- **Vi keybindings**: Full vim mode with `prompt_toolkit`
+- **Cost tracking**: Real-time token usage and cost display
+- **Cache awareness**: Prompt caching support for Gemini and Anthropic
 
 ## Quick Start
 
-Get up and running immediately using `uv`.
+```bash
+# Install uv if needed
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone and run
+git clone git@github.com:sonercirit/agent.git && cd agent
+export GEMINI_API_KEY=your_key  # or add to .env
+./run_agent.sh
+```
+
+## Usage
 
 ```bash
-# 1. Clone and setup
-git clone <repo-url>
-cd agent
-./run_agent.sh --help
-
-# 2. Configure credentials
-export GEMINI_API_KEY=your_key
-# or create a .env file
-
-# 3. Run (Interactive Manual Mode)
+# Interactive (default)
 ./run_agent.sh
 
-# 4. Run (Autonomous Mode)
-./run_agent.sh --mode auto --initial-prompt "Audit this repo and summarize README.md"
+# With initial prompt
+./run_agent.sh --initial-prompt "Summarize this repo"
+
+# Auto mode (no approval prompts)
+./run_agent.sh --mode auto
+
+# Use OpenRouter
+./run_agent.sh --provider openrouter --model anthropic/claude-sonnet-4
 ```
-
-## Table of Contents
-
-- [Quick Start](#quick-start)
-- [Installation & Setup](#installation--setup)
-- [Usage & Configuration](#usage--configuration)
-- [Keyboard Shortcuts](#keyboard-shortcuts)
-- [Tool Catalog](#tool-catalog)
-- [Architecture & Internals](#architecture--internals)
-- [Development](#development)
-
-## Installation & Setup
-
-### Prerequisites
-
-- **Python 3.10+**
-- **[uv](https://github.com/astral-sh/uv)**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- **System Tools**: `fd`, `ripgrep` (for file search), `wl-clipboard`/`xclip`/`pngpaste` (for images).
-
-### Configuration
-
-Create a `.env` file or export variables:
-
-```bash
-GEMINI_API_KEY=...             # Default provider
-OPENROUTER_API_KEY=...         # If using OpenRouter
-DEFAULT_MODEL=...              # Optional: google/gemini-3-pro-preview
-```
-
-## Usage & Configuration
-
-### CLI Options
-
-| Flag           | Description                                      | Default        |
-| :------------- | :----------------------------------------------- | :------------- |
-| `--mode`, `-m` | `manual` (approve tools) or `auto` (autonomous). | `manual`       |
-| `--provider`   | Backend: `gemini` or `openrouter`.               | `gemini`       |
-| `--model`      | specific model identifier.                       | `gemini-3-pro` |
-| `--debug`      | Verbose logging.                                 | `INFO`         |
-
-### Interactive Session
-
-- **Submit**: `Alt+Enter` (or `Esc` then `Enter`).
-- **Multiline**: Supported naturally.
-- **Paste Image**: `Alt+I` (reads from system clipboard).
 
 ## Keyboard Shortcuts
 
-| Context      | Keys        | Action                                     |
-| :----------- | :---------- | :----------------------------------------- |
-| **Anywhere** | `Ctrl+C`    | Interrupt/Cancel.                          |
-| **Input**    | `Alt+Enter` | Submit message.                            |
-| **Input**    | `Alt+E`     | Edit in `$EDITOR`.                         |
-| **Input**    | `Alt+I`     | Paste image from clipboard.                |
-| **Input**    | `Alt+Z`     | **Undo**: Revert last turn & file changes. |
-| **Thinking** | `Ctrl+W`    | Graceful stop (finish current step).       |
+| Keys | Action |
+|------|--------|
+| `Alt+Enter` | Submit message |
+| `Alt+E` | Open in $EDITOR |
+| `Alt+I` | Paste clipboard image |
+| `Alt+Z` | Undo last turn |
+| `Ctrl+W` | Stop gracefully |
+| `Ctrl+C` | Cancel/interrupt |
 
-## Tool Catalog
+## Tools
 
-The agent maps these Python functions to LLM tools:
+| Tool | Description |
+|------|-------------|
+| `bash(command)` | Execute shell command (30s timeout) |
+| `search_files(pattern)` | Find files with `fd` |
+| `search_string(query)` | Search with `ripgrep` |
+| `read_file(path)` | Read file content |
+| `update_file(path, content)` | Write/patch files |
+| `google_search(query)` | Web search via grounding |
+| `describe_image(paths)` | Analyze images |
 
-| Tool                    | Description                                |
-| :---------------------- | :----------------------------------------- |
-| `bash(command)`         | Execute shell commands (30s timeout).      |
-| `search_files(pattern)` | Find files using `fd`.                     |
-| `search_string(query)`  | Grep files using `rg`.                     |
-| `read_file/update_file` | Read/Write file content (with validation). |
-| `google_search(query)`  | Trigger online grounding/search.           |
-| `describe_image(paths)` | Analyze local or clipboard images.         |
+## Configuration
 
-## Architecture & Internals
-
-### Project Structure
-
-- **`src/agent.py`**: Main loop, UI bootstrapping, and orchestration.
-- **`src/llm.py`**: Dispatcher for Gemini/OpenRouter.
-- **`src/tools.py`**: Tool implementations and schema generation.
-- **`src/undo.py`**: Manages state snapshots (Git-based or manual backups).
-- **`src/cache.py`**: Handles Anthropic/Gemini token caching strategies.
-
-### Safety & Recovery
-
-- **Undo Mechanism**: `Alt+Z` triggers a rollback. If Git is present, it reverts the tree. Otherwise, it restores file backups.
-- **Guardrails**: Tool outputs are truncated (~4k chars) to prevent context flooding.
-- **Observability**: Monitor cost and cache status in real-time.
-
-## Development
-
-Managed via `uv`.
+Environment variables (or `.env` file):
 
 ```bash
-# Sync dependencies
-uv sync
-
-# Run linting
-uv run ruff check
+GEMINI_API_KEY=...        # For Gemini provider
+OPENROUTER_API_KEY=...    # For OpenRouter provider
+DEFAULT_MODEL=...         # Override default model
 ```
 
-## Dependencies
+CLI options:
 
-Main stacks: `prompt_toolkit`, `requests`, `python-dotenv`.
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--mode` | `manual` or `auto` | `manual` |
+| `--provider` | `gemini` or `openrouter` | `gemini` |
+| `--model` | Model identifier | `gemini-3-pro-preview` |
+| `--debug` | Verbose logging | off |
+
+## Requirements
+
+- Python 3.10+
+- Optional: `fd`, `ripgrep` (for file search tools)
+- Optional: `wl-clipboard`/`xclip`/`pngpaste` (for image paste)
+
+## License
+
+MIT

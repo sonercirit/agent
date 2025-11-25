@@ -1,135 +1,143 @@
+"""OpenRouter API provider."""
+
 import requests
 import json
-import time
 import asyncio
 import logging
 import html
 from prompt_toolkit import print_formatted_text
 from prompt_toolkit.formatted_text import HTML
 from ..config import config
+from ..cache import apply_anthropic_cache
 
 logger = logging.getLogger(__name__)
 
 
-async def call_openrouter(messages, tools, model=None):
+def prepare_messages_for_openrouter(messages: list, model: str) -> list:
+    """Prepare messages for OpenRouter, including reasoning preservation for Gemini."""
+    is_gemini = "gemini" in model.lower()
+    prepared = []
+
+    for msg in messages:
+        new_msg = {"role": msg["role"]}
+
+        # Handle content
+        if "content" in msg:
+            new_msg["content"] = msg["content"]
+
+        # Handle tool calls (assistant messages)
+        if "tool_calls" in msg:
+            new_msg["tool_calls"] = msg["tool_calls"]
+
+        # Handle tool results
+        if "tool_call_id" in msg:
+            new_msg["tool_call_id"] = msg["tool_call_id"]
+        if "name" in msg:
+            new_msg["name"] = msg["name"]
+
+        # Preserve reasoning_details for Gemini models (required for tool calling)
+        # This contains the encrypted thought signatures needed for multi-turn tool calls
+        if is_gemini and "reasoning_details" in msg:
+            new_msg["reasoning_details"] = msg["reasoning_details"]
+
+        prepared.append(new_msg)
+
+    return prepared
+
+
+async def call_openrouter(messages: list, tools: list, model: str = None) -> dict:
+    """Call OpenRouter API. Returns dict with 'message' and 'usage'."""
     effective_model = model or config.model
+
+    # Detect provider type for optimizations
     is_anthropic = "anthropic" in effective_model or "claude" in effective_model
-    is_openai = "openai" in effective_model or "gpt" in effective_model or "o1" in effective_model or "o3" in effective_model or "o4" in effective_model
+    is_openai = any(x in effective_model for x in ["openai", "gpt", "o1", "o3", "o4"])
     is_gemini = "gemini" in effective_model
-    
+
+    # Apply Anthropic caching if applicable
+    if is_anthropic:
+        apply_anthropic_cache(messages, effective_model)
+
+    # Prepare messages (handles reasoning preservation for Gemini)
+    prepared_messages = prepare_messages_for_openrouter(messages, effective_model)
+
     headers = {
-        "Authorization": f"Bearer {config.api_key}",
+        "Authorization": f"Bearer {config.openrouter_api_key}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/your-repo/agent",
+        "HTTP-Referer": "https://github.com/sonercirit/agent",
         "X-Title": "Agent",
     }
 
     body = {
         "model": effective_model,
-        "messages": messages,
-        "tools": tools,
+        "messages": prepared_messages,
+        "tools": tools if tools else None,
         "temperature": 0,
         "usage": {"include": True},
         "include_reasoning": True,
-        "provider": {"allow_fallbacks": False},
         "reasoning": {"effort": "high"},
+        "provider": {"allow_fallbacks": False},
     }
-    
-    # Enable prompt caching for Anthropic models
+
+    # Remove None values
+    body = {k: v for k, v in body.items() if v is not None}
+
+    # Lock to specific providers
     if is_anthropic:
-        # OpenRouter passes through Anthropic beta headers
-        # headers["anthropic-beta"] = "prompt-caching-2024-07-31"
-        # Force Anthropic as provider (not Google Vertex) to enable caching
         body["provider"] = {"order": ["Anthropic"], "allow_fallbacks": False}
-    
-    # Lock OpenAI models to OpenAI provider
-    if is_openai:
+    elif is_openai:
         body["provider"] = {"order": ["OpenAI"], "allow_fallbacks": False}
-    
-    # Lock Gemini models to Google AI Studio provider
-    if is_gemini:
+    elif is_gemini:
         body["provider"] = {"order": ["Google AI Studio"], "allow_fallbacks": False}
 
-    # Handle Google Search Trigger
-    force_grounding = False
-    if tools:
-        for t in tools:
-            if t["function"]["name"] == "__google_search_trigger__":
-                force_grounding = True
-                break
-
-    if force_grounding:
+    # Handle Google Search trigger
+    if tools and any(t["function"]["name"] == "__google_search_trigger__" for t in tools):
         if not body["model"].endswith(":online"):
             body["model"] += ":online"
-        if body.get("tools"):
-            body["tools"] = [
-                t
-                for t in body["tools"]
-                if t["function"]["name"] != "__google_search_trigger__"
-            ]
-            if not body["tools"]:
-                del body["tools"]
+        body["tools"] = [t for t in tools if t["function"]["name"] != "__google_search_trigger__"]
+        if not body["tools"]:
+            body.pop("tools", None)
 
-    MAX_RETRIES = 3
-    attempt = 0
-
-    while attempt < MAX_RETRIES:
+    # Retry loop
+    for attempt in range(3):
         try:
             response = await asyncio.to_thread(
-                requests.post,
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
-                json=body,
-                timeout=120,
+                requests.post, "https://openrouter.ai/api/v1/chat/completions", headers=headers, json=body, timeout=120
             )
 
             if response.status_code != 200:
-                error_text = response.text
                 if response.status_code >= 500 or response.status_code == 429:
-                    logger.warning(
-                        f"Attempt {attempt + 1} failed: {response.status_code}. Retrying..."
-                    )
-                    attempt += 1
-                    await asyncio.sleep(1 * (2**attempt))
+                    logger.warning(f"Attempt {attempt + 1} failed: {response.status_code}. Retrying...")
+                    await asyncio.sleep(2**attempt)
                     continue
-                raise Exception(
-                    f"OpenRouter API error: {response.status_code} - {error_text}"
-                )
+                raise Exception(f"OpenRouter API error: {response.status_code} - {response.text}")
 
             data = response.json()
 
-            # Check for API error in response body
             if "error" in data:
-                error_msg = data["error"]
-                if isinstance(error_msg, dict):
-                    error_msg = error_msg.get("message", str(error_msg))
-                logger.warning(f"Attempt {attempt + 1} failed: API error - {error_msg}. Retrying...")
-                attempt += 1
-                await asyncio.sleep(1 * (2**attempt))
+                logger.warning(f"API error: {data['error']}. Retrying...")
+                await asyncio.sleep(2**attempt)
                 continue
 
             if "choices" not in data or not data["choices"]:
-                logger.warning(f"Attempt {attempt + 1} failed: No choices in response. Data: {data}. Retrying...")
-                attempt += 1
-                await asyncio.sleep(1 * (2**attempt))
+                logger.warning("No choices in response. Retrying...")
+                await asyncio.sleep(2**attempt)
                 continue
 
-            if "usage" in data:
-                print_formatted_text(
-                    HTML(
-                        f"<style fg='#666666'>Token Usage: {html.escape(json.dumps(data['usage'], indent=2))}</style>"
-                    )
-                )
+            usage = data.get("usage", {})
+            if usage:
+                print_formatted_text(HTML(f"<style fg='#666666'>Tokens: {html.escape(json.dumps(usage))}</style>"))
 
-            choice = data["choices"][0]
-            message = choice["message"]
+            msg = data["choices"][0]["message"]
 
-            return {"message": message, "usage": data.get("usage")}
+            # Log reasoning details preservation for debugging
+            if is_gemini and msg.get("reasoning_details"):
+                logger.debug(f"Response has reasoning_details: {len(msg['reasoning_details'])} items")
+
+            return {"message": msg, "usage": usage}
 
         except requests.exceptions.RequestException as e:
-            logger.warning(f"Attempt {attempt + 1} failed: Network error. Retrying...")
-            attempt += 1
-            await asyncio.sleep(1 * (2**attempt))
-            continue
+            logger.warning(f"Attempt {attempt + 1} failed: {e}")
+            await asyncio.sleep(2**attempt)
 
-    raise Exception("Failed to call OpenRouter API after retries.")
+    raise Exception("Failed to call OpenRouter API after 3 retries.")
