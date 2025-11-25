@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Save the current directory as the target working directory
+TARGET_DIR="$(pwd)"
+
 # Change to the script's directory so it can run from anywhere
 cd "$(dirname "$0")"
 
@@ -9,4 +12,4 @@ if ! command -v uv &> /dev/null; then
     exit 1
 fi
 
-uv run python -m src.agent "$@"
+AGENT_WORK_DIR="$TARGET_DIR" uv run python -m src.agent "$@"

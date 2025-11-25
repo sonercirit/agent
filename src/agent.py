@@ -5,6 +5,7 @@ try:
 except ImportError:
     pass
 import sys
+import os
 import json
 import time
 import logging
@@ -28,6 +29,12 @@ from .tools import tool_implementations, tools_schema, save_clipboard_image
 from .cache import manage_cache
 from .utils import ask_approval
 from .undo import UndoManager
+
+
+# Restore working directory if provided
+if "AGENT_WORK_DIR" in os.environ:
+    os.chdir(os.environ["AGENT_WORK_DIR"])
+
 
 
 # Setup Logging
