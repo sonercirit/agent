@@ -9,6 +9,7 @@ dependencies = [
     "requests>=2.0.0",
     "python-dotenv>=1.0.0",
     "Pygments>=2.0.0",
+    "uvloop>=0.22.1",
 ]
 
 [build-system]
