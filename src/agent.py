@@ -12,7 +12,7 @@ import logging
 import html
 from prompt_toolkit import PromptSession, print_formatted_text
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.formatted_text import HTML, FormattedText
 from prompt_toolkit.styles import Style
 from prompt_toolkit.lexers import PygmentsLexer
 from pygments.lexers.markup import MarkdownLexer
@@ -280,7 +280,9 @@ async def handle_tool_calls(tool_calls):
             args = {}
 
         print_formatted_text(
-            HTML("  <b>{}</b>({})").format(func_name, json.dumps(args))
+            HTML("  <b>{}</b>({})").format(
+                html.escape(func_name), html.escape(json.dumps(args))
+            )
         )
         logger.debug(f"Executing tool {func_name} with args: {args}")
 
@@ -311,9 +313,7 @@ async def handle_tool_calls(tool_calls):
 
         logger.debug(f"Tool Result: {str(result)}")
         print_formatted_text(
-            HTML("<style fg='#888888'>Result: {}...</style>").format(
-                html.escape(str(result)[:100])
-            )
+            FormattedText([('#888888', f"Result: {str(result)[:100]}...")])
         )
 
 
