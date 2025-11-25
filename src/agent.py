@@ -311,16 +311,6 @@ async def main():
             html.escape(str(config.mode)), html.escape(str(config.model))
         )
     )
-    print_formatted_text(HTML("<style fg='#888888'>Shortcuts:</style>"))
-    print_formatted_text(HTML("<style fg='#888888'>  Alt+Enter : Submit</style>"))
-    print_formatted_text(
-        HTML("<style fg='#888888'>  Alt+E     : Open External Editor</style>")
-    )
-    print_formatted_text(
-        HTML("<style fg='#888888'>  Alt+I     : Paste Image from Clipboard</style>")
-    )
-    print_formatted_text(HTML("<style fg='#888888'>  Ctrl+C    : Stop/Cancel</style>"))
-    print_formatted_text(HTML("<style fg='#888888'>  Type 'exit' to quit.</style>"))
 
     if config.initial_prompt:
         print_formatted_text(HTML("\n<ansicyan>Executing initial prompt...</ansicyan>"))
@@ -393,7 +383,9 @@ async def main():
     while True:
         try:
             user_input = await session.prompt_async(
-                HTML("<b>User (Alt+Enter to send):</b>\n"),
+                HTML(
+                    "<b>User (Alt+Enter: Send, Alt+E: Editor, Alt+I: Image, Ctrl+C: Cancel, exit: Quit):</b>\n"
+                ),
                 bottom_toolbar=bottom_toolbar,
             )
 
