@@ -30,15 +30,6 @@ export GEMINI_API_KEY=your_key
 ./run_agent.sh --mode auto --initial-prompt "Audit this repo and summarize README.md"
 ```
 
-### Build Binary
-
-Compile the agent into a single, standalone binary (~20MB).
-
-```bash
-./build.sh
-./dist/agent
-```
-
 ## Table of Contents
 
 - [Quick Start](#quick-start)
