@@ -90,7 +90,9 @@ async def update_file(path, content, old_content=None):
                 f.write(new_content)
             return f"Successfully updated {path} (partial replace)."
         else:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+            directory = os.path.dirname(path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
             return f"Successfully updated {path} (full overwrite)."
