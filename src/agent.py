@@ -24,6 +24,7 @@ from .cache import manage_cache
 from .utils import ask_approval
 from .undo import UndoManager
 
+
 # Setup Logging
 class PTKHandler(logging.Handler):
     def emit(self, record):
@@ -340,12 +341,16 @@ async def main():
         if restored_messages is not None:
             # Restore messages
             messages[:] = restored_messages
-            
+
             # Restore input buffer
             event.current_buffer.text = last_user_content
-            print_formatted_text(HTML("\n<ansiyellow>Undoing last turn and reverting changes...</ansiyellow>"))
+            print_formatted_text(
+                HTML(
+                    "\n<ansiyellow>Undoing last turn and reverting changes...</ansiyellow>"
+                )
+            )
         else:
-             print_formatted_text(HTML("\n<ansired>Nothing to undo.</ansired>"))
+            print_formatted_text(HTML("\n<ansired>Nothing to undo.</ansired>"))
 
     @kb.add("escape", "enter")
     def _(event):
