@@ -7,6 +7,7 @@ A terminal-native, high-reasoning AI operator designed for complex tasks. It orc
 - **Observability**: Real-time cost tracking, cache telemetry, and reason-trace streaming.
 - **Safety**: Granular "Undo" (git/file-based), manual approval modes, and graceful stops.
 - **Ergonomics**: `prompt_toolkit` UI with Vim bindings, syntax highlighting, and clipboard image support.
+- **Performance**: Integrated `uvloop` for blazing fast async I/O and zero input lag.
 
 ## Quick Start
 
@@ -27,6 +28,15 @@ export GEMINI_API_KEY=your_key
 
 # 4. Run (Autonomous Mode)
 ./run_agent.sh --mode auto --initial-prompt "Audit this repo and summarize README.md"
+```
+
+### Build Binary
+
+Compile the agent into a single, standalone binary (~20MB).
+
+```bash
+./build.sh
+./dist/agent
 ```
 
 ## Table of Contents

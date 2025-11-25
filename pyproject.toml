@@ -10,6 +10,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "Pygments>=2.0.0",
     "uvloop>=0.22.1",
+    "pyinstaller>=6.17.0",
 ]
 
 [build-system]
