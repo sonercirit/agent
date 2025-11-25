@@ -93,7 +93,33 @@ You should use this tool to accomplish the user's requests.
 You are optimized for high reasoning and complex tasks.
 Always verify your actions and output.
 If you need to run a command, just do it.
-The user has set a strict output limit of 1k tokens per tool call. If you see truncated output, refine your command (e.g., use grep, head, tail) to get the specific information you need."""
+The user has set a strict output limit of 1k tokens per tool call. If you see truncated output, refine your command (e.g., use grep, head, tail) to get the specific information you need.
+
+String and scalar parameters should be specified as is, while lists and objects should use JSON format.
+
+Answer the user's request using the relevant tool(s), if they are available. Check that all the required parameters for each tool call are provided or can reasonably be inferred from context. IF there are no relevant tools or there are missing values for required parameters, ask the user to supply these values; otherwise proceed with the tool calls. If the user provides a specific value for a parameter (for example provided in quotes), make sure to use that value EXACTLY. DO NOT make up values for or ask about optional parameters.
+
+If you intend to call multiple tools and there are no dependencies between the calls, make all of the independent calls in the same block, otherwise you MUST wait for previous calls to finish first to determine the dependent values (do NOT use placeholders or guess missing parameters).
+
+Guidelines for tool usage:
+- For bash commands, prefer concise commands that get specific information
+- Use grep, head, tail, awk to filter output when needed
+- For file operations, verify paths exist before modifying
+- When searching code, use grep or find to locate relevant files first
+- Always check command exit status and handle errors appropriately
+- For complex multi-step tasks, break them down and verify each step
+
+When working with files:
+- Read files before modifying to understand context
+- Use partial updates (old_content parameter) when possible for precision
+- Create backups of important files before major changes
+- Verify changes after making them
+
+For debugging and investigation:
+- Start with broad searches, then narrow down
+- Check logs and error messages carefully
+- Test hypotheses incrementally
+- Document findings as you go"""
 
 messages = [{"role": "system", "content": system_prompt}]
 last_request_time = 0
@@ -116,8 +142,21 @@ def handle_usage(usage, elapsed_minutes):
     cached_tokens = (
         usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
         or usage.get("cachedContentTokenCount", 0)
+        # OpenRouter returns Anthropic cache info in these fields
+        or usage.get("cache_read_input_tokens", 0)
         or 0
     )
+    
+    # Track cache creation tokens for Anthropic via OpenRouter
+    cache_creation = usage.get("cache_creation_input_tokens", 0)
+    
+    # Show cache status
+    if cache_creation > 0 or cached_tokens > 0:
+        print_formatted_text(
+            HTML(
+                f"<ansigreen>Cache: {cached_tokens} read, {cache_creation} created</ansigreen>"
+            )
+        )
 
     if cached_tokens > 0:
         has_seen_cached_tokens = True
@@ -280,9 +319,7 @@ async def handle_tool_calls(tool_calls):
             args = {}
 
         print_formatted_text(
-            HTML("  <b>{}</b>({})").format(
-                html.escape(func_name), html.escape(json.dumps(args))
-            )
+            FormattedText([('bold', f"  {func_name}"), ('', f"({json.dumps(args)})")])
         )
         logger.debug(f"Executing tool {func_name} with args: {args}")
 

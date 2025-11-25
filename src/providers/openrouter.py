@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 async def call_openrouter(messages, tools, model=None):
+    effective_model = model or config.model
+    is_anthropic = "anthropic" in effective_model or "claude" in effective_model
+    
     headers = {
         "Authorization": f"Bearer {config.api_key}",
         "Content-Type": "application/json",
@@ -20,13 +23,22 @@ async def call_openrouter(messages, tools, model=None):
     }
 
     body = {
-        "model": model or config.model,
+        "model": effective_model,
         "messages": messages,
         "tools": tools,
+        "temperature": 0,
         "usage": {"include": True},
         "include_reasoning": True,
         "provider": {"allow_fallbacks": False},
+        "reasoning": {"effort": "high"},
     }
+    
+    # Enable prompt caching for Anthropic models
+    if is_anthropic:
+        # OpenRouter passes through Anthropic beta headers
+        # headers["anthropic-beta"] = "prompt-caching-2024-07-31"
+        # Force Anthropic as provider (not Google Vertex) to enable caching
+        body["provider"] = {"order": ["Anthropic"], "allow_fallbacks": False}
 
     # Handle Google Search Trigger
     force_grounding = False
@@ -75,6 +87,22 @@ async def call_openrouter(messages, tools, model=None):
                 )
 
             data = response.json()
+
+            # Check for API error in response body
+            if "error" in data:
+                error_msg = data["error"]
+                if isinstance(error_msg, dict):
+                    error_msg = error_msg.get("message", str(error_msg))
+                logger.warning(f"Attempt {attempt + 1} failed: API error - {error_msg}. Retrying...")
+                attempt += 1
+                await asyncio.sleep(1 * (2**attempt))
+                continue
+
+            if "choices" not in data or not data["choices"]:
+                logger.warning(f"Attempt {attempt + 1} failed: No choices in response. Data: {data}. Retrying...")
+                attempt += 1
+                await asyncio.sleep(1 * (2**attempt))
+                continue
 
             if "usage" in data:
                 print_formatted_text(
