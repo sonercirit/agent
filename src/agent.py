@@ -22,7 +22,7 @@ from .llm import call_llm
 from .tools import tool_implementations, tools_schema, save_clipboard_image
 from .cache import manage_cache
 from .utils import ask_approval
-
+from .undo import UndoManager
 
 # Setup Logging
 class PTKHandler(logging.Handler):
@@ -61,6 +61,18 @@ handler.setFormatter(
 root_logger.addHandler(handler)
 
 logger = logging.getLogger("Agent")
+
+undo_manager = UndoManager()
+
+# Wrap update_file to track changes
+if "update_file" in tool_implementations:
+    original_update_file = tool_implementations["update_file"]
+
+    async def wrapped_update_file(path, content, old_content=None):
+        undo_manager.record_file_change(path)
+        return await original_update_file(path, content, old_content)
+
+    tool_implementations["update_file"] = wrapped_update_file
 
 system_prompt = """You are a powerful agentic AI assistant.
 You have access to a bash tool which allows you to do almost anything on the system.
@@ -115,6 +127,8 @@ def handle_usage(usage, elapsed_minutes):
 
 async def _process_turn_logic(user_input, stop_check_callback=None):
     global last_request_time
+
+    undo_manager.start_turn(messages)
 
     logger.debug(f"Processing turn with input: {user_input}")
     messages.append({"role": "user", "content": user_input})
@@ -312,6 +326,26 @@ async def main():
         await process_turn(config.initial_prompt)
 
     kb = KeyBindings()
+
+    @kb.add("escape", "z")
+    def _(event):
+        # Find the last user message in current messages before undoing
+        last_user_content = ""
+        for msg in reversed(messages):
+            if msg["role"] == "user":
+                last_user_content = msg["content"]
+                break
+
+        restored_messages = undo_manager.undo()
+        if restored_messages is not None:
+            # Restore messages
+            messages[:] = restored_messages
+            
+            # Restore input buffer
+            event.current_buffer.text = last_user_content
+            print_formatted_text(HTML("\n<ansiyellow>Undoing last turn and reverting changes...</ansiyellow>"))
+        else:
+             print_formatted_text(HTML("\n<ansired>Nothing to undo.</ansired>"))
 
     @kb.add("escape", "enter")
     def _(event):
