@@ -15,6 +15,7 @@ from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.key_binding.vi_state import InputMode
 
 from .config import config
 from .llm import call_llm
@@ -334,14 +335,27 @@ async def main():
         style=Style.from_dict(
             {
                 "prompt": "ansicyan bold",
+                "bottom-toolbar": "bg:#333333 #ffffff",
             }
         ),
     )
+
+    def bottom_toolbar():
+        if session.app.vi_state.input_mode == InputMode.INSERT:
+            return HTML(" <b>[INSERT]</b>  <i>Press Esc to enter command mode</i>")
+        elif session.app.vi_state.input_mode == InputMode.NAVIGATION:
+            return HTML(" <b>[COMMAND]</b> <i>Press i to enter insert mode</i>")
+        elif session.app.vi_state.input_mode == InputMode.REPLACE:
+            return HTML(" <b>[REPLACE]</b>")
+        elif session.app.vi_state.input_mode == InputMode.REPLACE_SINGLE:
+            return HTML(" <b>[REPLACE_SINGLE]</b>")
+        return ""
 
     while True:
         try:
             user_input = await session.prompt_async(
                 HTML("<b>User (Alt+Enter to send):</b>\n"),
+                bottom_toolbar=bottom_toolbar,
             )
 
             if user_input.strip().lower() == "exit":
