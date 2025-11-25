@@ -250,6 +250,7 @@ async def call_gemini(messages, tools, model=None):
 
     MAX_RETRIES = 3
     attempt = 0
+    last_error = None
 
     while attempt < MAX_RETRIES:
         try:
@@ -281,10 +282,15 @@ async def call_gemini(messages, tools, model=None):
 
             if response.status_code != 200:
                 error_text = response.text
+                last_error = f"Status: {response.status_code}\nBody: {error_text}"
+                logger.warning(f"Raw response status: {response.status_code}")
+                logger.warning(f"Raw response body: {error_text}")
+
                 if response.status_code >= 500 or response.status_code == 429:
                     logger.warning(
                         f"Attempt {attempt + 1} failed: {response.status_code}. Retrying..."
                     )
+                    logger.info("Starting retry...")
                     attempt += 1
                     await asyncio.sleep(1 * (2**attempt))
                     continue
@@ -372,9 +378,21 @@ async def call_gemini(messages, tools, model=None):
             }
 
         except requests.exceptions.RequestException as e:
-            logger.warning(f"Attempt {attempt + 1} failed: Network error. Retrying...")
+            last_error = f"Network error: {str(e)}"
+            logger.warning(f"Attempt {attempt + 1} failed: {last_error}")
+
+            if hasattr(e, "response") and e.response is not None:
+                status = e.response.status_code
+                body_text = e.response.text
+                last_error += f"\nStatus: {status}\nBody: {body_text}"
+                logger.warning(f"Raw response status: {status}")
+                logger.warning(f"Raw response body: {body_text}")
+
+            logger.info("Starting retry...")
             attempt += 1
             await asyncio.sleep(1 * (2**attempt))
             continue
 
-    raise Exception("Failed to call Gemini API after retries.")
+    raise Exception(
+        f"Failed to call Gemini API after {MAX_RETRIES} retries.\nLast error details:\n{last_error}"
+    )
